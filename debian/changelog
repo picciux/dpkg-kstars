@@ -1,0 +1,6 @@
+kstars (3.7.7-1) UNRELEASED; urgency=low
+
+  * Initial release. Closes: #nnnn
+    <nnnn is the bug number of your ITP>
+
+ -- Matteo Piscitelli <matteo@matteopiscitelli.it>  Wed, 20 Aug 2025 20:45:57 +0000
