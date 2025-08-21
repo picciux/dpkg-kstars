@@ -1,2 +1,10 @@
-
-# You must remove unused comment lines for the released package.
+README.md
+AUTHORS
+README.customize
+README.i18n
+README.images
+README.ephemerides
+README.planetmath
+README.timekeeping
+README.cicd
+LICENSES
