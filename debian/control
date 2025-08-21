@@ -2,7 +2,7 @@ Source: kstars
 Section: misc
 Priority: optional
 Maintainer: Matteo Piscitelli <matteo@matteopiscitelli.it>
-Build-Depends: cmake, debhelper-compat (= 13), libstellarsolver-dev, libxisf-dev, libeigen3-dev, libcfitsio-dev, zlib1g-dev, libindi-dev, extra-cmake-modules, libkf5plotting-dev, libqt5svg5-dev, libkf5xmlgui-dev, libkf5kio-dev, kinit-dev, libkf5newstuff-dev, libkf5doctools-dev, libkf5notifications-dev, qtdeclarative5-dev, libkf5crash-dev, gettext, libnova-dev, libgsl-dev, libraw-dev, libkf5notifyconfig-dev, wcslib-dev, libqt5websockets5-dev, qt5keychain-dev,libsecret-1-dev, libqt5datavisualization5-dev, libopencv-dev
+Build-Depends: cmake, debhelper-compat (= 13), libstellarsolver-dev, libxisf-dev, libeigen3-dev, libcfitsio-dev, zlib1g-dev, libindi-dev, extra-cmake-modules, libkf5plotting-dev, libqt5svg5-dev, libkf5xmlgui-dev, libkf5kio-dev, kinit-dev, libkf5newstuff-dev, libkf5doctools-dev, libkf5notifications-dev, qtdeclarative5-dev, libkf5crash-dev, gettext, libnova-dev, libgsl-dev, libraw-dev, libkf5notifyconfig-dev, wcslib-dev, libqt5websockets5-dev, qt5keychain-dev, libsecret-1-dev, libqt5datavisualization5-dev, qml-module-qtquick-controls, libopencv-dev
 Standards-Version: 4.5.1
 Homepage: https://kstars.kde.org
 Rules-Requires-Root: no
