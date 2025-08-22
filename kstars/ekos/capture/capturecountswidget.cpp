@@ -298,7 +298,7 @@ void CaptureCountsWidget::updateCaptureStatus(Ekos::CaptureState status, bool is
     }
 }
 
-void CaptureCountsWidget::updateJobProgress(CaptureProcessOverlay::FrameData data, const QString &trainname)
+void CaptureCountsWidget::updateJobProgress(CaptureHistory::FrameData data, const QString &trainname)
 {
     m_currentFrame[trainname] = data;
 
@@ -398,7 +398,8 @@ bool CaptureCountsWidget::isCaptureActive(const QString &trainname)
     return (state == Ekos::CAPTURE_PROGRESS ||
             state == Ekos::CAPTURE_CAPTURING ||
             state == Ekos::CAPTURE_PAUSE_PLANNED ||
-            state == Ekos::CAPTURE_IMAGE_RECEIVED);
+            state == Ekos::CAPTURE_IMAGE_RECEIVED ||
+            state == Ekos::CAPTURE_DITHERING);
 }
 
 

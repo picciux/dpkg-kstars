@@ -12,6 +12,7 @@
 #include <QBrush>
 #include <QPen>
 #include <memory>
+#include <functional>
 
 #ifdef HAVE_INDI
 #include <lilxml.h>
@@ -44,14 +45,14 @@ class MosaicTiles : public SkyObject
          * @param output
          * @return
          */
-        //bool toJSON(QJsonObject &output);
+        bool toJSON(QJsonObject &output);
 
-        /**
-         * @brief fromJSON
-         * @param input
-         * @return
-         */
-        //bool fromJSON(const QJsonObject &input);
+        std::function<void(const QJsonObject &)> updateCallback;
+
+        void setUpdateCallback(std::function<void(const QJsonObject &)> callback)
+        {
+            updateCallback = callback;
+        }
 
         /***************************************************************************************************
          * Operation Modes
@@ -63,8 +64,14 @@ class MosaicTiles : public SkyObject
         } OperationMode;
 
         OperationMode m_OperationMode {MODE_PLANNING};
-        OperationMode operationMode() const { return m_OperationMode;}
-        void setOperationMode(OperationMode value) {m_OperationMode = value;}
+        OperationMode operationMode() const
+        {
+            return m_OperationMode;
+        }
+        void setOperationMode(OperationMode value)
+        {
+            m_OperationMode = value;
+        }
 
         /***************************************************************************************************
          * Tile Functions.
@@ -170,50 +177,87 @@ class MosaicTiles : public SkyObject
         {
             m_PainterAlphaAuto = value;
         }
-        const QString &targetName() const {return m_TargetName;}
+        const QString &targetName() const
+        {
+            return m_TargetName;
+        }
         void setTargetName(const QString &value)
         {
             m_TargetName = value;
         }
-        const QString &group() const {return m_Group;}
+        const QString &group() const
+        {
+            return m_Group;
+        }
         void setGroup(const QString &value)
         {
             m_Group = value;
         }
-        const QString &completionCondition(QString *arg) const {
-            *arg = m_CompletionConditionArg;
+        const QString &completionCondition() const
+        {
             return m_CompletionCondition;
         }
-        void setCompletionCondition(const QString &value, const QString &arg = "")
+        void setCompletionCondition(const QString &value)
         {
             m_CompletionCondition = value;
-            m_CompletionConditionArg = arg;
+        }
+        const QString  &completionConditionArg() const
+        {
+            return m_CompletionConditionArg;
+        }
+        void setCompletionConditionArg(const QString &value)
+        {
+            m_CompletionConditionArg = value;
         }
 
-        const QString &sequenceFile() const {return m_SequenceFile;}
+        const QString &sequenceFile() const
+        {
+            return m_SequenceFile;
+        }
         void setSequenceFile(const QString &value)
         {
             m_SequenceFile = value;
         }
-        const QString &outputDirectory() const {return m_OutputDirectory;}
+        const QString &outputDirectory() const
+        {
+            return m_OutputDirectory;
+        }
         void setOutputDirectory(const QString &value)
         {
             m_OutputDirectory = value;
         }
-        int focusEveryN() const {return m_FocusEveryN;}
+        int focusEveryN() const
+        {
+            return m_FocusEveryN;
+        }
         void setFocusEveryN(int value)
         {
             m_FocusEveryN = value;
         }
-        int alignEveryN() const {return m_AlignEveryN;}
+        int alignEveryN() const
+        {
+            return m_AlignEveryN;
+        }
         void setAlignEveryN(int value)
         {
             m_AlignEveryN = value;
         }
-        bool isTrackChecked() const {return m_TrackChecked;}
-        bool isFocusChecked() const {return m_FocusChecked;}
-        bool isAlignChecked() const {return m_AlignChecked;}
-        bool isGuideChecked() const {return m_GuideChecked;}
+        bool isTrackChecked() const
+        {
+            return m_TrackChecked;
+        }
+        bool isFocusChecked() const
+        {
+            return m_FocusChecked;
+        }
+        bool isAlignChecked() const
+        {
+            return m_AlignChecked;
+        }
+        bool isGuideChecked() const
+        {
+            return m_GuideChecked;
+        }
         void setStepChecks(bool track, bool focus, bool align, bool guide)
         {
             m_TrackChecked = track;
@@ -223,14 +267,13 @@ class MosaicTiles : public SkyObject
         }
 
         // Titles
-        const QList<std::shared_ptr<OneTile>> &tiles() const
+        const QList<std::shared_ptr<OneTile >> &tiles() const
         {
             return m_Tiles;
         }
         std::shared_ptr<OneTile> oneTile(int row, int col);
 
     private:
-
         // Overall properties
         double m_FocalLength {0};
         double m_FocalReducer {1};
@@ -257,7 +300,7 @@ class MosaicTiles : public SkyObject
         QBrush m_TextBrush;
         QPen m_TextPen;
 
-        QList<std::shared_ptr<OneTile>> m_Tiles;
+        QList<std::shared_ptr<OneTile >> m_Tiles;
 
         /**
            * @brief adjustCoordinate This uses the mosaic center as reference and the argument resolution of the sky map at that center.
@@ -274,8 +317,4 @@ class MosaicTiles : public SkyObject
         QSizeF calculateTargetMosaicFOV() const;
         QSize mosaicFOVToGrid() const;
         QSizeF calculateCameraFOV() const;
-
-
-    private:
 };
-

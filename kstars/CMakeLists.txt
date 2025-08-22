@@ -84,6 +84,7 @@ if (INDI_FOUND)
         indi/indistd.cpp
         indi/indilistener.cpp
         indi/indiconcretedevice.cpp
+        indi/indicommon.cpp
         indi/indiguider.cpp
         indi/indimount.cpp
         indi/indicamera.cpp
@@ -137,6 +138,7 @@ if (INDI_FOUND)
             ekos/capture/capturepreviewwidget.ui
             ekos/capture/capturecountswidget.ui
             ekos/capture/captureprocessoverlay.ui
+            ekos/capture/capturehistorynavigation.ui
             ekos/capture/dslrinfo.ui
             ekos/capture/rotatorsettings.ui
             ekos/capture/customproperties.ui
@@ -234,19 +236,25 @@ if (INDI_FOUND)
             ekos/auxiliary/buildfilteroffsets.cpp
             ekos/auxiliary/tabledelegate.cpp
             ekos/auxiliary/opslogs.cpp
-	    ekos/auxiliary/rotatorutils.cpp
+	        ekos/auxiliary/rotatorutils.cpp
             ekos/auxiliary/serialportassistant.cpp
             ekos/auxiliary/portselector.cpp
             ekos/auxiliary/ledstatuswidget.cpp
 
             # Capture
             ekos/capture/capture.cpp
+            ekos/capture/capturehistory.cpp
             ekos/capture/capturemodulestate.cpp
             ekos/capture/cameraprocess.cpp
             ekos/capture/camerastate.cpp
             ekos/capture/capturedeviceadaptor.cpp
             ekos/capture/camera.cpp
+            ekos/capture/camera_actions.cpp
+            ekos/capture/camera_config.cpp
+            ekos/capture/camera_device.cpp
+            ekos/capture/camera_jobs.cpp
             ekos/capture/capturepreviewwidget.cpp
+            ekos/capture/capturehistorynavigation.cpp
             ekos/capture/capturecountswidget.cpp
             ekos/capture/captureprocessoverlay.cpp
             ekos/capture/refocusstate.cpp
@@ -287,19 +295,18 @@ if (INDI_FOUND)
             ekos/scheduler/schedulerutils.cpp
             ekos/scheduler/schedulertypes.cpp
             ekos/scheduler/framingassistantui.cpp
-            ekos/scheduler/mosaictilesmanager.cpp
-            ekos/scheduler/mosaictilesmodel.cpp
-            #ekos/scheduler/mosaicrenderer.cpp
             ekos/scheduler/greedyscheduler.cpp
             ekos/scheduler/scheduleraltitudegraph.cpp
             ekos/scheduler/opsalignmentsettings.cpp
             ekos/scheduler/opsscriptssettings.cpp
             ekos/scheduler/opsjobssettings.cpp
             ekos/scheduler/opsoffsetsettings.cpp
+            ekos/scheduler/schedulersettings.cpp
 
             # Focus
             ekos/focus/focus.cpp
             ekos/focus/focusmodule.cpp
+            ekos/focus/focusfitsview.cpp
             ekos/focus/focushfrvplot.cpp
             ekos/focus/focusprofileplot.cpp
             ekos/focus/focusalgorithms.cpp
@@ -432,10 +439,16 @@ if (CFITSIO_FOUND)
         fitsviewer/platesolve.cpp
         fitsviewer/fitsdebayer.cpp
         fitsviewer/opsfits.cpp
+        fitsviewer/fitsdirwatcher.cpp
+        fitsviewer/fitsmemmonitor.cpp
         )
 
     if (Qt5DataVisualization_FOUND OR Qt6DataVisualization_FOUND)
         set(fits_SRCS ${fits_SRCS} fitsviewer/starprofileviewer.cpp)
+    endif()
+
+    if (OpenCV_FOUND AND WCSLIB_FOUND)
+        set(fits_SRCS ${fits_SRCS} fitsviewer/fitsstack.cpp)
     endif()
 
     set (fits2_SRCS
@@ -461,6 +474,7 @@ if (CFITSIO_FOUND)
         fitsviewer/fitsheaderdialog.ui
         fitsviewer/statform.ui
         fitsviewer/platesolve.ui
+        fitsviewer/livestacking.ui
         fitsviewer/catalogobject.ui
         fitsviewer/catalogobjecttypefilter.ui
         fitsviewer/fitsdebayer.ui
@@ -1294,7 +1308,7 @@ IF (NOT ANDROID)
             qt6_add_dbus_adaptor(kstars_SRCS org.kde.kstars.Ekos.Mount.xml ekos/mount/mount.h Ekos::Mount)
             qt6_add_dbus_adaptor(kstars_SRCS org.kde.kstars.Ekos.Scheduler.xml ekos/scheduler/schedulerprocess.h Ekos::SchedulerProcess)
             qt6_add_dbus_adaptor(kstars_SRCS org.kde.kstars.Ekos.Observatory.xml ekos/observatory/observatory.h Ekos::Observatory)
-	ENDIF()
+	    ENDIF()
     ENDIF ()
 
     ki18n_wrap_ui(kstars_SRCS
@@ -1329,44 +1343,44 @@ IF (NOT ANDROID)
     generate_export_header(KStarsLib)
 
     target_link_libraries(KStarsLib
-    LibKSDataHandlers
-    htmesh
-    Qt::Gui
-    Qt::PrintSupport
-    Qt::Sql
-    Qt::Svg
-    Qt::Qml
-    Qt::Quick
-    Qt::Network
-    #Qt::Positioning
-    Qt::Concurrent
-    Qt::WebSockets
-    ${ZLIB_LIBRARIES}
-    Eigen3::Eigen
-    GSL::gsl
+        LibKSDataHandlers
+        htmesh
+        Qt::Gui
+        Qt::PrintSupport
+        Qt::Sql
+        Qt::Svg
+        Qt::Qml
+        Qt::Quick
+        Qt::Network
+        #Qt::Positioning
+        Qt::Concurrent
+        Qt::WebSockets
+        ${ZLIB_LIBRARIES}
+        Eigen3::Eigen
+        GSL::gsl
     )
     if (BUILD_QT5)
         target_link_libraries(KStarsLib
-        KF5::Crash
-        KF5::I18n
-        KF5::NewStuff
-        KF5::KIOFileWidgets
-        KF5::WidgetsAddons
-        KF5::Plotting
-        KF5::Notifications
+            KF5::Crash
+            KF5::I18n
+            KF5::NewStuff
+            KF5::KIOFileWidgets
+            KF5::WidgetsAddons
+            KF5::Plotting
+            KF5::Notifications
         )
     else()
         target_link_libraries(KStarsLib
-        KF6::Crash
-        KF6::I18n
-	KF6::XmlGui
-        KF6::NewStuffWidgets
-        KF6::KIOFileWidgets
-        KF6::WidgetsAddons
-        KF6::Plotting
-        KF6::Notifications
-        Qt6::DBus
-        Qt6::SvgWidgets
+            KF6::Crash
+            KF6::I18n
+            KF6::XmlGui
+            KF6::NewStuffWidgets
+            KF6::KIOFileWidgets
+            KF6::WidgetsAddons
+            KF6::Plotting
+            KF6::Notifications
+            Qt6::DBus
+            Qt6::SvgWidgets
         )
     endif()
 
@@ -1386,7 +1400,7 @@ IF (NOT ANDROID)
     endif()
 
     if (StellarSolver_FOUND)
-	target_link_libraries(KStarsLib StellarSolver::stellarsolver)
+        target_link_libraries(KStarsLib StellarSolver::stellarsolver)
     endif(StellarSolver_FOUND)
 
     if(NOT WIN32)
@@ -1498,7 +1512,7 @@ endif()
 #endif( OPENGL_FOUND )
 
 if (OpenCV_FOUND)
-    target_link_libraries(KStarsLib opencv_highgui opencv_imgcodecs)
+    target_link_libraries(KStarsLib ${OpenCV_LIBS})
 endif()
 
 set (KSTARS_APP_SRCS
@@ -1547,11 +1561,13 @@ if(APPLE)
     endif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files)
 
     set(KSTARS_APP "${CMAKE_BINARY_DIR}/bin/KStars.app")
+    message(STATUS "Copying needed files into KStars App Directory: ${KSTARS_APP}")
     execute_process(COMMAND ${CMAKE_COMMAND}
-                    -DBUNDLED_DATA_LOCATION=${CMAKE_BINARY_DIR}/bin/KStars.app/Contents/Resources
+                    -DBUNDLED_DATA_LOCATION=${KSTARS_APP}/Contents/Resources
                     ${CMAKE_CURRENT_SOURCE_DIR}/data
                     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/kstars/data")
-    execute_process(COMMAND ${CMAKE_COMMAND} --build . --target install
+    execute_process(COMMAND -E env DATA_INSTALL_DIR=${KSTARS_APP}/Contents/Resources
+                    ${CMAKE_COMMAND} --build . --target install
                     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/kstars/data")
     file(COPY
         "${CMAKE_CURRENT_SOURCE_DIR}/data/qml"
@@ -1565,9 +1581,15 @@ if(APPLE)
     file(COPY
         "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/gsc"
         DESTINATION "${KSTARS_APP}/Contents/MacOS/")
-    file(COPY
-        "${CMAKE_CURRENT_SOURCE_DIR}/kstars.notifyrc"
-        DESTINATION "${KSTARS_APP}/Contents/Resources/knotifications5/")
+    if(BUILD_QT5)
+      file(COPY
+          "${CMAKE_CURRENT_SOURCE_DIR}/kstars.notifyrc"
+          DESTINATION "${KSTARS_APP}/Contents/Resources/knotifications5/")
+    else(BUILD_QT5)
+      file(COPY
+          "${CMAKE_CURRENT_SOURCE_DIR}/kstars.notifyrc"
+          DESTINATION "${KSTARS_APP}/Contents/Resources/knotifications6/")
+    endif(BUILD_QT5)
     file(COPY
         "${CMAKE_CURRENT_SOURCE_DIR}/kstars.kcfg"
         DESTINATION "${KSTARS_APP}/Contents/Resources/")
@@ -1640,13 +1662,14 @@ if(APPLE)
         list(FILTER CAMLIBS EXCLUDE REGEX "dSYM$")
         file(COPY ${CAMLIBS} DESTINATION "${KSTARS_APP}/Contents/Resources/DriverSupport/gphoto/CAMLIBS/")
     endif(NOT INDI_SERVER)
-
-    execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/FrameworksForVLC.zip"
-        WORKING_DIRECTORY "${KSTARS_APP}/Contents/")
-    execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/backend.zip"
-        WORKING_DIRECTORY "${KSTARS_APP}/Contents/Plugins/")
-    execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/vlc.zip"
-        WORKING_DIRECTORY "${KSTARS_APP}/Contents/Plugins/")
+    if(BUILD_QT5)
+      execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/FrameworksForVLC.zip"
+          WORKING_DIRECTORY "${KSTARS_APP}/Contents/")
+      execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/backend.zip"
+          WORKING_DIRECTORY "${KSTARS_APP}/Contents/Plugins/")
+      execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/vlc.zip"
+          WORKING_DIRECTORY "${KSTARS_APP}/Contents/Plugins/")
+    endif(BUILD_QT5)
     execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/xplanet-data.zip"
         WORKING_DIRECTORY "${KSTARS_APP}/Contents/Resources/kstars/")
     execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/sounds.zip"
@@ -1659,6 +1682,11 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/macosbundle.plist.in"
     )
+    # This last one is for ediing purposes.  Craft puts KStars.app in ${CMAKE_BINARY_DIR}/bin and building wihtout craft places it in ${CMAKE_BINARY_DIR}/kstars
+    file(COPY
+      "${KSTARS_APP}"
+      DESTINATION "${CMAKE_BINARY_DIR}/kstars/")
+    message(STATUS "Finished copying files")
 endif(APPLE)
 
 if (BUILD_PYKSTARS)
