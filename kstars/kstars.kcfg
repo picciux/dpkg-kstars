@@ -206,9 +206,10 @@
          <whatsthis>Show the INDI window when starting EKOS.</whatsthis>
          <default>true</default>
       </entry>
-      <entry name="SaveFocusImages" type="Bool">
-         <label>Save autofocus images on disk?</label>
-         <default>false</default>
+      <entry name="maxFocusFrameFiles" type="Int">
+         <label>Limit for saved focus frames</label>
+         <whatsthis>Upper limit how many focus frames should be kept on disk.</whatsthis>
+         <default>0</default>
       </entry>
       <entry name="messageNotificationINDI" type="Bool">
          <label>INDI message notifications</label>
@@ -1696,6 +1697,10 @@
       <label>Make FITS Viewer window independent of KStars main window</label>
       <default>false</default>
    </entry>
+   <entry name="liveStackerOwnProcess" type="Bool">
+     <label>Run Live Stacker as a separate process</label>
+     <default>false</default>
+  </entry>
    <entry name="AutoDebayer" type="Bool">
       <label>Automatically debayer a FITS image if it is contains a bayer pattern</label>
       <default>!KSUtils::isHardwareLimited()</default>
@@ -1780,6 +1785,70 @@
    <entry name="FitsSolverRadius" type="Double">
       <label>Radius in position (degrees) to use with Fitsviewer Solving.</label>
       <default>30</default>
+   </entry>
+   <entry name="fitsLSMasterDark" type="String">
+      <whatsthis>Live Stacking master dark</whatsthis>
+      <default></default>
+   </entry>
+   <entry name="fitsLSMasterFlat" type="String">
+      <whatsthis>Live Stacking master flat</whatsthis>
+      <default></default>
+   </entry>
+   <entry name="fitsLSAlignMethod" type="UInt">
+      <whatsthis>Live Stacking alignment method</whatsthis>
+      <default>0</default>
+   </entry>
+   <entry name="fitsLSNumInMem" type="UInt">
+      <label>Live Stacking max number of subs to keep in memory</label>
+      <default>5</default>
+   </entry>
+   <entry name="fitsLSDownscale" type="UInt">
+      <whatsthis>Live Stacking downscale factor</whatsthis>
+      <default>1</default>
+   </entry>
+   <entry name="fitsLSWeighting" type="UInt">
+      <whatsthis>Live Stacking sub weighting</whatsthis>
+      <default>0</default>
+   </entry>
+   <entry name="fitsLSRejection" type="UInt">
+      <whatsthis>Live Stacking pixel rejection mechanism</whatsthis>
+      <default>0</default>
+   </entry>
+   <entry name="fitsLSLowSigma" type="Double">
+      <label>Live Stacking low sigma pixel rejection criteria</label>
+      <default>3.0</default>
+   </entry>
+   <entry name="fitsLSHighSigma" type="Double">
+      <label>Live Stacking high sigma pixel rejection criteria</label>
+      <default>3.0</default>
+   </entry>
+   <entry name="fitsLSWinsorCutoff" type="Double">
+      <label>Live Stacking sigma clipping windzor cutoff</label>
+      <default>3.0</default>
+   </entry>
+   <entry name="fitsLSDeconvAmt" type="Double">
+      <label>Live Stacking deconvolution amount</label>
+      <default>0.0</default>
+   </entry>
+   <entry name="fitsLSPSFSigma" type="Double">
+      <label>Live Stacking PSF sigma to apply in deconvolution</label>
+      <default>1.0</default>
+   </entry>
+   <entry name="fitsLSDenoiseAmt" type="Double">
+      <label>Live Stacking denoise amount</label>
+      <default>0.0</default>
+   </entry>
+   <entry name="fitsLSSharpenAmt" type="Double">
+      <label>Live Stacking sharpen amount</label>
+      <default>0.0</default>
+   </entry>
+   <entry name="fitsLSSharpenKernal" type="UInt">
+      <label>Live Stacking sharpening kernel size</label>
+      <default>3</default>
+   </entry>
+   <entry name="fitsLSSharpenSigma" type="Double">
+      <label>Live Stacking sharpening sigma</label>
+      <default>5.0</default>
    </entry>
    </group>
    <group name="WISettings">

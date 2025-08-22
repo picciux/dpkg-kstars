@@ -55,6 +55,13 @@ class FITSViewer : public KXmlGuiWindow
         Q_OBJECT
 
     public:
+        enum class Mode
+        {
+            Full,
+            LiveStacking
+        };
+
+        explicit FITSViewer(QWidget *parent = nullptr, Mode mode = Mode::Full);
         /** Constructor. */
         explicit FITSViewer(QWidget *parent);
         ~FITSViewer() override;
@@ -82,7 +89,7 @@ class FITSViewer : public KXmlGuiWindow
         {
             return m_Tabs.empty();
         }
-        const QList<QSharedPointer<FITSTab>> tabs() const
+        const QList<QPointer<FITSTab>> tabs() const
         {
             return m_Tabs;
         }
@@ -98,6 +105,8 @@ class FITSViewer : public KXmlGuiWindow
         void closeEvent(QCloseEvent *) override;
         void hideEvent(QHideEvent *) override;
         void showEvent(QShowEvent *) override;
+        bool eventFilter(QObject *watched, QEvent *event) override;
+
 
     public slots:
         void changeAlwaysOnTop(Qt::ApplicationState state);
@@ -105,6 +114,8 @@ class FITSViewer : public KXmlGuiWindow
         void blink();
         void nextBlink();
         void previousBlink();
+        void stack();
+        void restack(const int tabUID);
         void saveFile();
         void saveFileAs();
         void copyFITS();
@@ -152,9 +163,9 @@ class FITSViewer : public KXmlGuiWindow
     private:
         void updateButtonStatus(const QString &action, const QString &item, bool showing);
         // Shared utilites between the standard and "FromData" addFITS and updateFITS.
-        bool addFITSCommon(const QSharedPointer<FITSTab> &tab, const QUrl &imageName,
+        bool addFITSCommon(const QPointer<FITSTab> &tab, const QUrl &imageName,
                            FITSMode mode, const QString &previewText);
-        bool updateFITSCommon(const QSharedPointer<FITSTab> &tab, const QUrl &imageName, const QString tabTitle = "");
+        bool updateFITSCommon(const QPointer<FITSTab> &tab, const QUrl &imageName, const QString tabTitle = "");
 
         QTabWidget *fitsTabWidget { nullptr };
         QUndoGroup *undoGroup { nullptr };
@@ -163,10 +174,10 @@ class FITSViewer : public KXmlGuiWindow
         QLabel fitsPosition, fitsValue, fitsResolution, fitsZoom, fitsWCS, fitsHFR, fitsClip;
         QAction *saveFileAction { nullptr };
         QAction *saveFileAsAction { nullptr };
-        QList<QSharedPointer<FITSTab>> m_Tabs;
+        QList<QPointer<FITSTab>> m_Tabs;
         int fitsID { 0 };
         bool markStars { false };
-        QMap<int, QSharedPointer<FITSTab>> fitsMap;
+        QMap<int, QPointer<FITSTab>> fitsMap;
         QUrl lastURL;
         KActionMenu *roiActionMenu { nullptr };
         KActionMenu* roiMenu { nullptr };
@@ -175,6 +186,11 @@ class FITSViewer : public KXmlGuiWindow
         QList<QUrl> m_urls;
         void changeBlink(bool increment);
         static bool m_BlinkBusy;
+
+        // Live Stacking
+        Mode m_Mode { Mode::Full };
+        bool m_StackBusy { false };
+        void createLiveStackingOnly();
 
     signals:
         void trackingStarSelected(int x, int y);

@@ -19,6 +19,7 @@
 #include "kstars.h"
 #include "skymap.h"
 #endif
+#include "fitsviewer/fitsviewer.h"
 
 #if !defined(KSTARS_LITE)
 #include <KAboutData>
@@ -70,8 +71,6 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-
     QApplication app(argc, argv);
 
 #ifdef Q_OS_MACOS
@@ -85,10 +84,6 @@ int main(int argc, char *argv[])
 #endif
     Options::setKStarsFirstRun(false);
     app.setApplicationVersion(KSTARS_VERSION);
-    /**
-    * enable high dpi support
-    */
-    app.setAttribute(Qt::AA_UseHighDpiPixmaps, true);
 
     KLocalizedString::setApplicationDomain("kstars");
 #if defined(KSTARS_LITE)
@@ -114,14 +109,14 @@ int main(int argc, char *argv[])
         "kstars", i18n("KStars"), versionString, description.toString(), KAboutLicense::GPL,
         "2001-" + QString::number(QDate::currentDate().year()) +
         i18n(" (c), The KStars Team\n\nThe Gaussian Process Guider Algorithm: (c) "
-             "2014-2017 Max Planck Society"),
+         "2014-2017 Max Planck Society"),
         i18nc("Build number followed by copyright notice", "Build: %1\n\n%2\n\n%3",
               KSTARS_BUILD_TS,
               KSTARS_BUILD_RELEASE == QLatin1String("Beta") ?
-              "Pre-release beta snapshot. Do not use in production." :
-              "Stable release.",
+    "Pre-release beta snapshot. Do not use in production." :
+    "Stable release.",
               notice.toString()),
-        "https://edu.kde.org/kstars");
+    "https://edu.kde.org/kstars");
     aboutData.addAuthor(i18n("Jason Harris"), i18n("Original Author"),
                         "jharris@30doradus.org", "http://www.30doradus.org");
     aboutData.addAuthor(i18n("Jasem Mutlaq"), i18n("Current Maintainer"),
@@ -208,6 +203,7 @@ int main(int argc, char *argv[])
     parser.addOption(QCommandLineOption("height", i18n("Height of sky image."), "value"));
     parser.addOption(QCommandLineOption("date", i18n("Date and time."), "string"));
     parser.addOption(QCommandLineOption("paused", i18n("Start with clock paused.")));
+    parser.addOption(QCommandLineOption("live-stacker", i18n("Run Live Stacker standalone mode")));
 
     // urls to open
     parser.addPositionalArgument(QStringLiteral("urls"), i18n("FITS file(s) to open."),
@@ -215,6 +211,16 @@ int main(int argc, char *argv[])
 
     parser.process(app);
     aboutData.processCommandLine(&parser);
+
+    if (parser.isSet("live-stacker"))
+    {
+        if (!KStars::launchLiveStackerStandalone())
+        {
+            qCritical() << "Failed to initialize Live Stacker";
+            return 1;
+        }
+        return app.exec();
+    }
 
     if (parser.isSet("dump"))
     {

@@ -375,13 +375,7 @@ void KStars::slotINDIToolBar()
         auto scheduler = Ekos::Manager::Instance()->schedulerModule();
         if (a->isChecked() && scheduler && scheduler->moduleState()->schedulerState() != Ekos::SCHEDULER_RUNNING)
         {
-            // Only create if we don't have an instance already
-            if (findChild<Ekos::FramingAssistantUI *>("FramingAssistant") == nullptr)
-            {
-                Ekos::FramingAssistantUI *assistant = new Ekos::FramingAssistantUI();
-                assistant->setAttribute(Qt::WA_DeleteOnClose, true);
-                assistant->show();
-            }
+            scheduler->setFramingAssistantEnabled(true);
         }
 #endif
     }
@@ -518,7 +512,7 @@ void KStars::slotDownload()
                         QMessageBox::critical(
                             this, i18n("Error"),
                             i18n("The catalog \"%1\" is corrupt.<br>Expected id=%2 but "
-                                 "got id=%3",
+                             "got id=%3",
                                  entry.name(), id, meta.second.id));
                         continue;
                     }
@@ -750,11 +744,11 @@ void KStars::slotINDIDriver()
     if (KMessageBox::warningContinueCancel(
                 nullptr,
                 i18n("INDI Device Manager should only be used by advanced technical users. "
-                     "It cannot be used with Ekos. Do you still want to open INDI device "
-                     "manager?"),
+         "It cannot be used with Ekos. Do you still want to open INDI device "
+         "manager?"),
                 i18n("INDI Device Manager"), KStandardGuiItem::cont(),
                 KStandardGuiItem::cancel(),
-                "indi_device_manager_warning") == KMessageBox::Cancel)
+    "indi_device_manager_warning") == KMessageBox::Cancel)
         return;
 
     QString indiServerDir = Options::indiServer();
@@ -1325,6 +1319,45 @@ void KStars::slotBlink()
 #endif
 }
 
+void KStars::slotStack()
+{
+#if defined(HAVE_WCSLIB) && defined(HAVE_CFITSIO) && defined(HAVE_OPENCV)
+    if (Options::liveStackerOwnProcess())
+    {
+        // Fire up Live Stacker as a separate process
+        QString currentExecutablePath = QCoreApplication::applicationFilePath();
+        QStringList args = { "--live-stacker" };
+        QProcess *liveStacker = new QProcess(this);
+        liveStacker->setProgram(currentExecutablePath);
+        liveStacker->setArguments(args);
+        liveStacker->start();
+        if (liveStacker->waitForStarted(1000))
+        {
+            qCDebug(KSTARS) << "Live Stacker process started with PID:" << liveStacker->processId();
+            m_liveStackerProcesses.append(liveStacker);
+
+            // Listen for Live Stacker terminating and do admin to remove from the list of Live Stackers
+            connect(liveStacker, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this,
+                    [this, liveStacker](int, QProcess::ExitStatus)
+            {
+                m_liveStackerProcesses.removeAll(liveStacker);
+                liveStacker->deleteLater();
+            });
+        }
+        else
+        {
+            qCDebug(KSTARS) << "Failed to start Live Stacker process.";
+            liveStacker->deleteLater();
+        }
+    }
+    else
+    {
+        auto fv = createFITSViewer();
+        fv->stack();
+    }
+#endif
+}
+
 void KStars::slotExportImage()
 {
     //TODO Check this
@@ -1463,8 +1496,8 @@ void KStars::slotPrint()
     {
         QString message =
             i18n("You can save printer ink by using the \"Star Chart\" "
-                 "color scheme, which uses a white background. Would you like to "
-                 "temporarily switch to the Star Chart color scheme for printing?");
+             "color scheme, which uses a white background. Would you like to "
+             "temporarily switch to the Star Chart color scheme for printing?");
 
         int answer = KMessageBox::warningContinueCancel(
                          nullptr, message, i18n("Switch to Star Chart Colors?"),
@@ -2159,6 +2192,23 @@ void KStars::slotAboutToQuit()
     quit->waitForFinished(1000);
     delete quit;
 #endif
+
+    // Stop any separate Live Stacker processes
+    for (QProcess *liveStacker : std::as_const(m_liveStackerProcesses))
+    {
+        if (liveStacker->state() != QProcess::NotRunning)
+        {
+            qCDebug(KSTARS) << "Terminating Live Stacker PID:" << liveStacker->processId();
+            liveStacker->terminate();
+            if (!liveStacker->waitForFinished(3000))
+            {
+                qCDebug(KSTARS) << "Killing Live Stacker PID:" << liveStacker->processId();
+                liveStacker->kill();
+            }
+        }
+        liveStacker->deleteLater();
+    }
+    m_liveStackerProcesses.clear();
 }
 
 void KStars::slotShowPositionBar(SkyPoint *p)
