@@ -1,10 +1,10 @@
 kstars for Debian
 
-Upstream distribution is splitted in 3 packages for binaries, arch-indep data and doc.
-However, starting from version 3.7.7, KStars complete documentation is not included in the sources anymore. As a result, kstars-doc package  contains the full documentation only for a few languages.
+Upstream distribution is now splitted in 2 packages for binaries and arch-indep.
+Starting from version 3.7.8, KStars documentation is fully removed from sources. As a result, kstars-doc package is not available anymore.
 
 To reach the complete KStars Handbook, available in different languages, please visit:
 
     https://kstars-docs.kde.org
 
- -- Matteo Piscitelli <matteo@matteopiscitelli.it>  Wed, 22 Aug 2025 02:08:57 +0200
+ -- Matteo Piscitelli <matteo@matteopiscitelli.it>  Wed, 22 Aug 2025 04:22:57 +0200
