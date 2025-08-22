@@ -5,4 +5,9 @@
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
+	      -DCMAKE_BUILD_TYPE=Release \
 	      -DBUILD_TESTING=Off
+
+# Avoid compressing .docbook files
+override_dh_compress:
+	dh_compress -X.docbook
