@@ -1,10 +1,10 @@
-kstars (3.7.8-1) bookworm; urgency=medium
+kstars (5:3.7.8-1) bookworm; urgency=medium
 
   * Update to KStars 3.7.8. See changelog.gz for details.
 
  -- Matteo Piscitelli <matteo@matteopiscitelli.it>  Fri, 22 Aug 2025 02:26:06 +0000
 
-kstars (3.7.7-1) bookworm; urgency=low
+kstars (5:3.7.7-1) bookworm; urgency=low
 
   * Kstars 3.7.7, package revision 1.
 
