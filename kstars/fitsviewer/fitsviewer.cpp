@@ -45,7 +45,8 @@ QList<KLocalizedString> FITSViewer::filterTypes = {ki18n("Auto Stretch"), ki18n(
                                                    ki18n("Flip Vertical")
                                                   };
 
-FITSViewer::FITSViewer(QWidget *parent) : KXmlGuiWindow(parent)
+FITSViewer::FITSViewer(QWidget *parent, Mode mode) : KXmlGuiWindow(parent), m_Mode(mode)
+
 {
 #ifdef Q_OS_MACOS
     if (Options::independentWindowFITS())
@@ -71,6 +72,8 @@ FITSViewer::FITSViewer(QWidget *parent) : KXmlGuiWindow(parent)
     setWindowIcon(QIcon::fromTheme("kstars_fitsviewer"));
 
     setCentralWidget(fitsTabWidget);
+    QTabBar *tabBar = fitsTabWidget->tabBar();
+    tabBar->installEventFilter(this);
 
     connect(fitsTabWidget, &QTabWidget::currentChanged, this, &FITSViewer::tabFocusUpdated);
     connect(fitsTabWidget, &QTabWidget::tabCloseRequested, this, &FITSViewer::closeTab);
@@ -133,6 +136,16 @@ FITSViewer::FITSViewer(QWidget *parent) : KXmlGuiWindow(parent)
     actionCollection()->setDefaultShortcut(action, QKeySequence(Qt::CTRL | Qt::Key_O | Qt::AltModifier));
     action->setText(i18n("Open/Blink Directory"));
     connect(action, &QAction::triggered, this, &FITSViewer::blink);
+
+#if defined(HAVE_CFITSIO) && defined(HAVE_WCSLIB) && defined(HAVE_OPENCV)
+    if (m_Mode == Mode::LiveStacking)
+    {
+        action = actionCollection()->addAction("live_stacker");
+        actionCollection()->setDefaultShortcut(action, QKeySequence(Qt::CTRL | Qt::Key_K | Qt::SHIFT));
+        action->setText(i18n("Live Stacker..."));
+        connect(action, &QAction::triggered, this, &FITSViewer::stack);
+    }
+#endif
 
     saveFileAction = KStandardAction::save(this, &FITSViewer::saveFile, actionCollection());
     saveFileAction->setIcon(QIcon::fromTheme("document-save"));
@@ -334,7 +347,9 @@ FITSViewer::FITSViewer(QWidget *parent) : KXmlGuiWindow(parent)
     /* Create GUI */
     createGUI("fitsviewerui.rc");
 
-    setWindowTitle(i18nc("@title:window", "KStars FITS Viewer"));
+    QString title = (m_Mode == Mode::LiveStacking) ? i18nc("@title:window", "KStars Live Stacker") :
+                                                     i18nc("@title:window", "KStars FITS Viewer");
+    setWindowTitle(title);
 
     /* initially resize in accord with KDE rules */
     show();
@@ -347,6 +362,9 @@ FITSViewer::FITSViewer(QWidget *parent) : KXmlGuiWindow(parent)
     }
     else
         resize(INITIAL_W, INITIAL_H);
+
+    if (m_Mode == Mode::LiveStacking)
+        stack();
 }
 
 void FITSViewer::changeAlwaysOnTop(Qt::ApplicationState state)
@@ -363,6 +381,44 @@ void FITSViewer::changeAlwaysOnTop(Qt::ApplicationState state)
 
 FITSViewer::~FITSViewer()
 {
+}
+
+bool FITSViewer::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == fitsTabWidget->tabBar() && event->type() == QEvent::MouseButtonPress)
+    {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::RightButton)
+        {
+            // Get the index of the tab that was clicked at the mouse event's position
+            int tabIndex = fitsTabWidget->tabBar()->tabAt(mouseEvent->pos());
+            if (tabIndex >= 0 && tabIndex < m_Tabs.size())   // -1 means no tab was at the clicked position
+            {
+                auto tab = m_Tabs[tabIndex];
+                QString currentTabText = tab->getTabName();
+                if (currentTabText.isEmpty())
+                    currentTabText = fitsTabWidget->tabText(tabIndex);
+
+                // Pop up a text input dialog
+                bool ok;
+                QString newText = QInputDialog::getText(this, i18n("Change Tab Title"),
+                                                        i18n("New title for tab '%1':", currentTabText),
+                                                        QLineEdit::Normal, currentTabText, &ok);
+                if (ok && !newText.isEmpty())
+                {
+                    tab->setTabName(newText);
+                    fitsTabWidget->setTabText(tabIndex, tab->getTabTitle());
+                }
+                // Return true to indicate that we have handled this event
+                // This prevents the QTabBar from processing the right-click further (e.g., context menu).
+                return true;
+            }
+        }
+    }
+
+    // For all other events, or if we didn't handle the right-click,
+    // let the base class's eventFilter (or the watched object itself) process the event.
+    return KXmlGuiWindow::eventFilter(watched, event);
 }
 
 void FITSViewer::closeEvent(QCloseEvent * /*event*/)
@@ -390,6 +446,9 @@ void FITSViewer::closeEvent(QCloseEvent * /*event*/)
     }
 
     emit terminated();
+
+    if (m_Mode == Mode::LiveStacking)
+        qApp->quit();
 }
 
 void FITSViewer::hideEvent(QHideEvent * /*event*/)
@@ -456,24 +515,25 @@ QString HFRClipString(FITSView* view)
 }
 }  // namespace
 
-bool FITSViewer::addFITSCommon(const QSharedPointer<FITSTab> &tab, const QUrl &imageName,
+bool FITSViewer::addFITSCommon(const QPointer<FITSTab> &tab, const QUrl &imageName,
                                FITSMode mode, const QString &previewText)
 {
-    int tabIndex = fitsTabWidget->indexOf(tab.get());
+    int tabIndex = fitsTabWidget->indexOf(tab);
     if (tabIndex != -1)
         return false;
 
     if (!imageName.isValid())
         lastURL = QUrl(imageName.url(QUrl::RemoveFilename));
 
-    QApplication::restoreOverrideCursor();
+    if (mode != FITS_LIVESTACKING)
+        QApplication::restoreOverrideCursor();
     tab->setPreviewText(previewText);
 
     // Connect tab signals
     tab->disconnect(this);
-    connect(tab.get(), &FITSTab::newStatus, this, &FITSViewer::updateStatusBar);
-    connect(tab.get(), &FITSTab::changeStatus, this, &FITSViewer::updateTabStatus);
-    connect(tab.get(), &FITSTab::debayerToggled, this, &FITSViewer::setDebayerAction);
+    connect(tab, &FITSTab::newStatus, this, &FITSViewer::updateStatusBar);
+    connect(tab, &FITSTab::changeStatus, this, &FITSViewer::updateTabStatus);
+    connect(tab, &FITSTab::debayerToggled, this, &FITSViewer::setDebayerAction);
     // Connect tab view signals
     connect(tab->getView().get(), &FITSView::actionUpdated, this, &FITSViewer::updateAction);
     connect(tab->getView().get(), &FITSView::wcsToggled, this, &FITSViewer::updateWCSFunctions);
@@ -482,20 +542,24 @@ bool FITSViewer::addFITSCommon(const QSharedPointer<FITSTab> &tab, const QUrl &i
     switch (mode)
     {
         case FITS_NORMAL:
+        case FITS_LIVESTACKING:
         case FITS_CALIBRATE:
-            fitsTabWidget->addTab(tab.get(), previewText.isEmpty() ? imageName.fileName() : previewText);
+            fitsTabWidget->addTab(tab, previewText.isEmpty() ? imageName.fileName() : previewText);
+            tabIndex = fitsTabWidget->indexOf(tab);
+            if (tabIndex != -1)
+                fitsTabWidget->setTabToolTip(tabIndex, i18n("Right click to change tab title."));
             break;
 
         case FITS_FOCUS:
-            fitsTabWidget->addTab(tab.get(), i18n("Focus"));
+            fitsTabWidget->addTab(tab, i18n("Focus"));
             break;
 
         case FITS_GUIDE:
-            fitsTabWidget->addTab(tab.get(), i18n("Guide"));
+            fitsTabWidget->addTab(tab, i18n("Guide"));
             break;
 
         case FITS_ALIGN:
-            fitsTabWidget->addTab(tab.get(), i18n("Align"));
+            fitsTabWidget->addTab(tab, i18n("Align"));
             break;
 
         case FITS_UNKNOWN:
@@ -509,7 +573,7 @@ bool FITSViewer::addFITSCommon(const QSharedPointer<FITSTab> &tab, const QUrl &i
 
     fitsMap[fitsID] = tab;
 
-    fitsTabWidget->setCurrentWidget(tab.get());
+    fitsTabWidget->setCurrentWidget(tab);
 
     actionCollection()->action("fits_debayer")->setEnabled(tab->getView()->imageData()->hasDebayer());
 
@@ -552,7 +616,7 @@ void FITSViewer::loadFiles()
         const QString cpath = tab->getCurrentURL()->path();
         if (fpath == cpath)
         {
-            fitsTabWidget->setCurrentWidget(tab.get());
+            fitsTabWidget->setCurrentWidget(tab);
             if (m_urls.size() > 0)
                 loadFiles();
             return;
@@ -562,11 +626,11 @@ void FITSViewer::loadFiles()
     led.setColor(Qt::yellow);
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
-    QSharedPointer<FITSTab> tab(new FITSTab(this));
+    QPointer<FITSTab> tab(new FITSTab(this));
 
     m_Tabs.push_back(tab);
 
-    connect(tab.get(), &FITSTab::failed, this, [ this ](const QString & errorMessage)
+    connect(tab, &FITSTab::failed, this, [ this ](const QString & errorMessage)
     {
         QApplication::restoreOverrideCursor();
         led.setColor(Qt::red);
@@ -582,7 +646,7 @@ void FITSViewer::loadFiles()
             loadFiles();
     });
 
-    connect(tab.get(), &FITSTab::loaded, this, [ = ]()
+    connect(tab, &FITSTab::loaded, this, [ = ]()
     {
         if (addFITSCommon(m_Tabs.last(), imageName, FITS_NORMAL, ""))
             emit loaded(fitsID++);
@@ -601,12 +665,12 @@ int FITSViewer::loadFile(const QUrl &imageName, FITSMode mode, FITSScale filter,
     led.setColor(Qt::yellow);
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
-    QSharedPointer<FITSTab> tab(new FITSTab(this));
+    QPointer<FITSTab> tab(new FITSTab(this));
 
     m_Tabs.push_back(tab);
     const int id = fitsID;
 
-    connect(tab.get(), &FITSTab::failed, this, [ this ](const QString & errorMessage)
+    connect(tab, &FITSTab::failed, this, [ this ](const QString & errorMessage)
     {
         QApplication::restoreOverrideCursor();
         led.setColor(Qt::red);
@@ -619,7 +683,7 @@ int FITSViewer::loadFile(const QUrl &imageName, FITSMode mode, FITSScale filter,
         }
     });
 
-    connect(tab.get(), &FITSTab::loaded, this, [ = ]()
+    connect(tab, &FITSTab::loaded, this, [ = ]()
     {
         if (addFITSCommon(m_Tabs.last(), imageName, mode, previewText))
             emit loaded(fitsID++);
@@ -637,7 +701,7 @@ bool FITSViewer::loadData(const QSharedPointer<FITSData> &data, const QUrl &imag
     led.setColor(Qt::yellow);
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
-    QSharedPointer<FITSTab> tab(new FITSTab(this));
+    QPointer<FITSTab> tab(new FITSTab(this));
 
     m_Tabs.push_back(tab);
 
@@ -709,7 +773,7 @@ void FITSViewer::updateFile(const QUrl &imageName, int fitsUID, FITSScale filter
 
     // On tab load success
     auto conn = std::make_shared<QMetaObject::Connection>();
-    *conn = connect(tab.get(), &FITSTab::loaded, this, [ = ]()
+    *conn = connect(tab, &FITSTab::loaded, this, [ = ]()
     {
         if (updateFITSCommon(tab, imageName))
         {
@@ -720,7 +784,7 @@ void FITSViewer::updateFile(const QUrl &imageName, int fitsUID, FITSScale filter
     });
 
     auto conn2 = std::make_shared<QMetaObject::Connection>();
-    *conn2 = connect(tab.get(), &FITSTab::failed, this, [ = ](const QString & errorMessage)
+    *conn2 = connect(tab, &FITSTab::failed, this, [ = ](const QString & errorMessage)
     {
         Q_UNUSED(errorMessage);
         QObject::disconnect(*conn2);
@@ -730,10 +794,10 @@ void FITSViewer::updateFile(const QUrl &imageName, int fitsUID, FITSScale filter
     tab->loadFile(imageName, tab->getView()->getMode(), filter);
 }
 
-bool FITSViewer::updateFITSCommon(const QSharedPointer<FITSTab> &tab, const QUrl &imageName, const QString tabTitle)
+bool FITSViewer::updateFITSCommon(const QPointer<FITSTab> &tab, const QUrl &imageName, const QString tabTitle)
 {
     // On tab load success
-    int tabIndex = fitsTabWidget->indexOf(tab.get());
+    int tabIndex = fitsTabWidget->indexOf(tab);
     if (tabIndex == -1)
         return false;
 
@@ -797,7 +861,7 @@ bool FITSViewer::updateData(const QSharedPointer<FITSData> &data, const QUrl &im
 
 void FITSViewer::tabFocusUpdated(int currentIndex)
 {
-    if (currentIndex < 0 || m_Tabs.empty())
+    if (currentIndex < 0 || currentIndex >= m_Tabs.size())
         return;
 
     m_Tabs[currentIndex]->tabPositionUpdated();
@@ -922,34 +986,38 @@ void FITSViewer::blink()
     led.setColor(Qt::yellow);
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
-    QSharedPointer<FITSTab> tab(new FITSTab(this));
+    QPointer<FITSTab> tab(new FITSTab(this));
 
     int tabIndex = m_Tabs.size();
-    if (allImages.size() > 1)
+    if (allImages.size() > 0)
     {
         m_Tabs.push_back(tab);
         tab->initBlink(allImages);
-        tab->setBlinkUpto(1);
+        tab->setBlinkUpto(0);
     }
     QString tabName = QString("%1/%2 %3")
                       .arg(1).arg(allImages.size()).arg(QFileInfo(allImages[0]).fileName());
-    connect(tab.get(), &FITSTab::failed, this, [ this ](const QString & errorMessage)
+    connect(tab, &FITSTab::failed, this, [ this, tab ](const QString & errorMessage)
     {
         Q_UNUSED(errorMessage);
-        QObject::sender()->disconnect(this);
+        if (tab)
+            tab->disconnect(this);
         QApplication::restoreOverrideCursor();
         led.setColor(Qt::red);
         m_BlinkBusy = false;
-    }, Qt::UniqueConnection);
+    });
 
-    connect(tab.get(), &FITSTab::loaded, this, [ = ]()
+    connect(tab, &FITSTab::loaded, this, [ this, tab, imageName, tabIndex, tabName ]()
     {
-        QObject::sender()->disconnect(this);
-        addFITSCommon(m_Tabs.last(), imageName, FITS_NORMAL, "");
-        //fitsTabWidget->tabBar()->setTabTextColor(tabIndex, Qt::red);
-        fitsTabWidget->setTabText(tabIndex, tabName);
+        if (tab)
+        {
+            tab->disconnect(this);
+            addFITSCommon(m_Tabs.last(), imageName, FITS_NORMAL, "");
+            //fitsTabWidget->tabBar()->setTabTextColor(tabIndex, Qt::red);
+            fitsTabWidget->setTabText(tabIndex, tabName);
+        }
         m_BlinkBusy = false;
-    }, Qt::UniqueConnection);
+    });
 
     actionCollection()->action("next_blink")->setEnabled(allImages.size() > 1);
     actionCollection()->action("previous_blink")->setEnabled(allImages.size() > 1);
@@ -988,22 +1056,26 @@ void FITSViewer::changeBlink(bool increment)
     QString tabName = QString("%1/%2 %3")
                       .arg(blinkIndex + 1).arg(filenames.size()).arg(QFileInfo(nextFilename).fileName());
     tab->disconnect(this);
-    connect(tab.get(), &FITSTab::failed, this, [ this, nextFilename ](const QString & errorMessage)
+    connect(tab, &FITSTab::failed, this, [ this, tab, nextFilename ](const QString & errorMessage)
     {
         Q_UNUSED(errorMessage);
-        QObject::sender()->disconnect(this);
+        if (tab)
+            tab->disconnect(this);
         QApplication::restoreOverrideCursor();
         led.setColor(Qt::red);
         m_BlinkBusy = false;
-    }, Qt::UniqueConnection);
+    });
 
-    connect(tab.get(), &FITSTab::loaded, this, [ = ]()
+    connect(tab, &FITSTab::loaded, this, [ this, tab, nextFilename, tabIndex, tabName ]()
     {
-        QObject::sender()->disconnect(this);
-        updateFITSCommon(tab, QUrl::fromLocalFile(nextFilename));
-        fitsTabWidget->setTabText(tabIndex, tabName);
+        if (tab)
+        {
+            tab->disconnect(this);
+            updateFITSCommon(tab, QUrl::fromLocalFile(nextFilename));
+            fitsTabWidget->setTabText(tabIndex, tabName);
+        }
         m_BlinkBusy = false;
-    }, Qt::UniqueConnection);
+    });
 
     tab->setBlinkUpto(blinkIndex);
     tab->loadFile(QUrl::fromLocalFile(nextFilename), FITS_NORMAL, FITS_NONE);
@@ -1039,6 +1111,109 @@ void FITSViewer::openFile()
 
     lastURL = QUrl(m_urls[0].url(QUrl::RemoveFilename));
     loadFiles();
+}
+
+// Launch the Live Stacking functionality...
+void FITSViewer::stack()
+{
+#if defined(HAVE_CFITSIO) && defined(HAVE_WCSLIB) && defined(HAVE_OPENCV)
+    if (m_StackBusy)
+        return;
+    m_StackBusy = true;
+
+    setWindowTitle(i18nc("@title:window", "KStars Live Stacker (BETA)"));
+    qCDebug(KSTARS_FITS) << "OpenCV Optimized: " << cv::useOptimized();
+    qCDebug(KSTARS_FITS) << QString("Live Stacker running openCV on %1 threads. SIMD Features enabled: %2")
+                                .arg(cv::getNumThreads()).arg(QString::fromStdString(cv::getCPUFeaturesLine()));
+
+    QString topDir = QDir::homePath();
+    QString filePath = lastURL.path();
+    if (filePath.isEmpty())
+        filePath = lastURL.toString();
+    QFileInfo fileInfo(filePath);
+    if (fileInfo.isDir())
+        topDir = fileInfo.absoluteFilePath();
+    else if (fileInfo.isFile())
+        topDir = fileInfo.absolutePath();
+    const QUrl imageName;
+
+    led.setColor(Qt::yellow);
+
+    QPointer<FITSTab> tab(new FITSTab(this));
+
+    m_Tabs.push_back(tab);
+    connect(tab, &FITSTab::failed, this, [ this, tab ](const QString & errorMessage)
+    {
+        Q_UNUSED(errorMessage);
+        if (tab)
+            tab->disconnect(this);
+        led.setColor(Qt::red);
+        m_StackBusy = false;
+    });
+
+    connect(tab, &FITSTab::loaded, this, [ this, tab, imageName ]()
+    {
+        if (tab)
+        {
+            tab->disconnect(this);
+            addFITSCommon(tab, imageName, FITS_LIVESTACKING, tab->getTabTitle());
+            fitsID++;
+        }
+        m_StackBusy = false;
+    });
+    tab->initStack(topDir, FITS_LIVESTACKING, FITS_NONE);
+#endif // defined(HAVE_CFITSIO) && defined(HAVE_WCSLIB) && defined(HAVE_OPENCV)
+}
+
+// Called when a stacking operation is in motion...
+void FITSViewer::restack(const int tabUID)
+{
+    auto tab = fitsMap.value(tabUID);
+    const QUrl imageName;
+
+    led.setColor(Qt::yellow);
+    updateStatusBar(i18n("Stacking..."), FITS_MESSAGE);
+    connect(tab, &FITSTab::failed, this, [ this, tab ](const QString & errorMessage)
+    {
+        Q_UNUSED(errorMessage);
+        if (tab)
+        {
+            tab->disconnect(this);
+            led.setColor(Qt::red);
+            updateStatusBar(i18n("Stacking Failed"), FITS_MESSAGE);
+        }
+    });
+
+    connect(tab, &FITSTab::loaded, this, [ this, tab, imageName ]()
+    {
+        // There doesn't seem to be a way in a lambda to just disconnect the loaded signal which if not
+        // disconnected results in fitsviewer crashing. So disconnect all and reset the other signals
+        if (tab)
+        {
+            tab->disconnect(this);
+            connect(tab, &FITSTab::newStatus, this, &FITSViewer::updateStatusBar);
+            connect(tab, &FITSTab::changeStatus, this, &FITSViewer::updateTabStatus);
+            connect(tab, &FITSTab::debayerToggled, this, &FITSViewer::setDebayerAction);
+            connect(tab->getView().get(), &FITSView::actionUpdated, this, &FITSViewer::updateAction);
+            connect(tab->getView().get(), &FITSView::wcsToggled, this, &FITSViewer::updateWCSFunctions);
+            connect(tab->getView().get(), &FITSView::starProfileWindowClosed, this, &FITSViewer::starProfileButtonOff);
+            updateFITSCommon(tab, imageName, tab->getTabTitle());
+            updateStatusBar(i18n("Stacking Complete"), FITS_MESSAGE);
+        }
+    });
+}
+
+// Called when a stacking operation is cancelled by the user
+void FITSViewer::stackCancelled(const int tabUID)
+{
+    auto tab = fitsMap.value(tabUID);
+    const QUrl imageName;
+
+    led.setColor(Qt::red);
+    updateStatusBar(i18n("Stacking Stopped"), FITS_MESSAGE);
+    int tabIndex = fitsTabWidget->indexOf(tab);
+    if (tabIndex >= 0)
+        fitsTabWidget->setTabText(tabIndex, tab->getTabTitle());
 }
 
 void FITSViewer::saveFile()
@@ -1271,15 +1446,21 @@ void FITSViewer::updateTabStatus(bool clean, const QUrl &imageURL)
 
 void FITSViewer::closeTab(int index)
 {
-    if (m_Tabs.empty())
+    if (index < 0 || index >= m_Tabs.size())
         return;
 
     auto tab = m_Tabs[index];
+    if (!tab)
+        return;
+
+    tab->disconnect(this);
 
     int UID = tab->getUID();
 
     fitsMap.remove(UID);
     m_Tabs.removeOne(tab);
+
+    delete tab;
 
     if (m_Tabs.empty())
     {

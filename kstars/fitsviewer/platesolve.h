@@ -16,6 +16,7 @@
 #include "ekos/auxiliary/stellarsolverprofile.h"
 #include "ekos/auxiliary/stellarsolverprofileeditor.h"
 #include "kpagewidgetmodel.h"
+#include "skyobject.h"
 
 class SkyPoint;
 
@@ -39,19 +40,29 @@ class PlateSolve: public QDialog, public Ui::PlateSolveUI
       void setScale(double scale);
       void setScaleUnits(int units);
       void setUseScale(bool yesNo);
-      void setLinear(bool yesNo);      
+      void setLinear(bool yesNo);
+      void disableOverlay() {
+          m_overlayDisabled = true;
+      }
 
     public slots:
         void extractImage(const QSharedPointer<FITSData> &imageData);
         void solveImage(const QSharedPointer<FITSData> &imageData);
         void solveImage(const QString &filename);
+        void plateSolveSub(const QSharedPointer<FITSData> &imageData, const double ra, const double dec,
+                           const double pixScale, const int index, const int healpix,
+                           const SSolver::ProcessType solveType);
 
     signals:
         void clicked();
         void extractorSuccess();
+        void subExtractorSuccess(const double medianHFR, const int numStars);
         void solverSuccess();
+        void subSolverSuccess();
         void extractorFailed();
+        void subExtractorFailed();
         void solverFailed();
+        void subSolverFailed();
         void auxClicked();
 
     private:
@@ -59,11 +70,15 @@ class PlateSolve: public QDialog, public Ui::PlateSolveUI
       void initSolverUI();
       void setupSolver(const QSharedPointer<FITSData> &imageData, bool extractOnly);
       void solverDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds);
+      void subSolverDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds);
       void extractorDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds);
+      void subExtractorDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds);
       void setupProfiles(int profileIndex);
       int getProfileIndex(int moduleIndex);
       void setProfileIndex(int moduleIndex, int profileIndex);
       void loadFileDone();
+      void centerOnSkymap();
+      void overlayImage();
 
       QSharedPointer<SolverUtils> m_Solver;
       QSharedPointer<FITSData> m_imageData;
@@ -75,5 +90,8 @@ class PlateSolve: public QDialog, public Ui::PlateSolveUI
       static QPointer<Ekos::StellarSolverProfileEditor> m_ProfileEditor;
       static QPointer<KConfigDialog> m_EditorDialog;
       static QPointer<KPageWidgetItem> m_ProfileEditorPage;
+
+      QSharedPointer<SkyObject> m_SolvedObject;
+      bool m_overlayDisabled { false };
 };
 

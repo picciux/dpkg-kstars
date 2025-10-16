@@ -1,6 +1,6 @@
 <!DOCTYPE kpartgui SYSTEM "kpartgui.dtd">
 
-<kpartgui name="KStars" version="9">
+<kpartgui name="KStars" version="10">
 <MenuBar noMerge="1">
         <Menu name="file" noMerge="1"><text>&amp;File</text>
                 <Action name="new_window" />
@@ -8,6 +8,7 @@
                 <Separator />
                 <Action name="open_file" />
                 <Action name="blink_directory" />
+                <Action name="live_stacker" />
                 <Action name="export_image" />
                 <Action name="run_script" />
                 <Separator />

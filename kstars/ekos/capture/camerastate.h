@@ -501,6 +501,11 @@ class CameraState: public QObject
             return m_guideDeviationTimer;
         }
 
+        QTimer &getGuideSettleTimer()
+        {
+            return m_guideSettleTimer;
+        }
+
         QTime &imageCountDown()
         {
             return m_imageCountDown;
@@ -539,9 +544,9 @@ class CameraState: public QObject
              * 1. the current job captures light frames AND the dither counter has reached 0 AND
              * 2. guiding is running OR the manual dithering option is selected AND
              * 3. there is a guiding camera active AND
-             * 4. there hasn't just a meridian flip been finised.
+             * 4. a meridian flip has not just completed.
              *
-             * @return true iff dithering is necessary.
+             * @return true if dithering is necessary.
              */
 
         bool checkDithering();
@@ -691,7 +696,7 @@ class CameraState: public QObject
          * @return True if a matching exposure is found and set, false otherwise.
          * @warning This only works if the flat frames were captured in the same live session.
          * If the flat frames were captured in another session (i.e. Ekos restarted), then all automatic exposure
-         * calculation results are discarded since Ekos does not save this information to the sequene file.
+         * calculation results are discarded since Ekos does not save this information to the sequence file.
          * Possible solution is to write to a local config file to keep this information persist between sessions.
          */
         bool setDarkFlatExposure(const QSharedPointer<SequenceJob> &job);
@@ -1018,6 +1023,8 @@ signals:
         uint m_SpikesDetected { 0 };
         // Timer for guiding recovery
         QTimer m_guideDeviationTimer;
+        // Timer for settling after guiding start
+        QTimer m_guideSettleTimer;
         // Capture timeout timer
         QTimer m_captureTimeout;
         uint8_t m_CaptureTimeoutCounter { 0 };

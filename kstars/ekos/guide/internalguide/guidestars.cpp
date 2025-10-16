@@ -14,8 +14,10 @@
 
 #include <math.h>
 #include <stellarsolver.h>
+#undef Const
 #include "ekos/auxiliary/stellarsolverprofileeditor.h"
 #include <QTime>
+#include <QElapsedTimer>
 
 #define DLOG if (false) qCDebug
 
@@ -501,7 +503,7 @@ double GuideStars::findMinDistance(int index, const QList<Edge*> &stars)
 }
 
 // Returns a list of 'num' stars, sorted according to evaluateSEPStars().
-// If the region-of-interest rectange is not null, it only returns scores in that area.
+// If the region-of-interest rectangle is not null, it only returns scores in that area.
 void GuideStars::findTopStars(const QSharedPointer<FITSData> &imageData, int num, QList<Edge> *stars,
                               const double maxHFR, const QRect *roi,
                               QList<double> *outputScores, QList<double> *minDistances)

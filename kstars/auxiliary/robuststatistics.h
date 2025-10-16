@@ -20,7 +20,7 @@
 //           LOCATION_TRIMMEDMEAN   - discard a specified fraction of high/low values before calculating the mean
 //           LOCATION_GASTWIRTH     - use the Gastwirth estimator based on combining different quantiles
 //                                    see https://www.gnu.org/software/gsl/doc/html/statistics.html#gastwirth-estimator
-//           LOCATION_SIGMACLIPPING - single step sigma clipping routine to sigma clip outliers fron the
+//           LOCATION_SIGMACLIPPING - single step sigma clipping routine to sigma clip outliers from the
 //                                    input data and calculate the mean from the remaining data
 //
 // Scale:    SCALE_VARIANCE         - variance
@@ -361,7 +361,7 @@ SampleStatistics ComputeSampleStatistics(std::vector<double> data,
         double trimAmount = 0.25,
         const size_t stride = 1);
 
-[[using gnu : pure]]
+//[[using gnu : pure]]
 constexpr double ConvertScaleToWeight(const ScaleCalculation scaleMethod, double scale)
 {
     // If the passed in scale is zero or near zero return a very small weight rather than infinity.

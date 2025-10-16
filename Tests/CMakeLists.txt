@@ -8,15 +8,15 @@ include_directories(
     ${kstars_SOURCE_DIR}/datahandlers
     )
 
-if(STELLARSOLVER_FOUND)
+if(StellarSolver_FOUND)
 include_directories(${STELLARSOLVER_INCLUDE_DIR})
-endif(STELLARSOLVER_FOUND)
+endif(StellarSolver_FOUND)
 
 if(WCSLIB_FOUND)
   include_directories( ${WCSLIB_INCLUDE_DIR} )
 endif(WCSLIB_FOUND)
 
-if (BUILD_QT5)
+if (NOT BUILD_WITH_QT6)
     FIND_PACKAGE(Qt5Test REQUIRED)
     SET( TEST_LIBRARIES
         Qt5::Core
@@ -26,7 +26,7 @@ if (BUILD_QT5)
         Qt5::Core
         Qt5::Test
     )
-else(BUILD_QT5)
+else(NOT BUILD_WITH_QT6)
     FIND_PACKAGE(Qt6Test REQUIRED)
     SET( TEST_LIBRARIES
         Qt6::Core
@@ -36,11 +36,10 @@ else(BUILD_QT5)
         Qt6::Core
         Qt6::Test
     )
-endif(BUILD_QT5)
+endif(NOT BUILD_WITH_QT6)
 
 SET( TEST_LIBRARIES
         ${TEST_LIBRARIES}
-        LibKSDataHandlers
         htmesh
         ${ZLIB_LIBRARIES}
         KStarsLib
@@ -48,11 +47,17 @@ SET( TEST_LIBRARIES
 
 SET( TEST_KSLITE_LIBRARIES
         ${TEST_KSLITE_LIBRARIES}
-        LibKSDataHandlers
         htmesh
         ${ZLIB_LIBRARIES}
         KStarsLiteLib
 )
+
+if(StellarSolver_FOUND)
+    SET( TEST_LIBRARIES
+            ${TEST_LIBRARIES}
+            StellarSolver::stellarsolver
+    )
+endif(StellarSolver_FOUND)
 
 add_subdirectory(auxiliary)
 add_subdirectory(tools)
@@ -79,10 +84,6 @@ add_subdirectory(internalguide)
 endif(NOT WIN32)
 ENDIF(INDI_FOUND)
 ENDIF(CFITSIO_FOUND)
-
-if(STELLARSOLVER_FOUND)
-    include_directories(${STELLARSOLVER_INCLUDE_DIR})
-endif(STELLARSOLVER_FOUND)
 
 IF (UNIX AND NOT APPLE AND CFITSIO_FOUND)
     IF (BUILD_KSTARS_LITE)

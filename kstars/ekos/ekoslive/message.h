@@ -25,7 +25,7 @@ class Message : public QObject
         Q_OBJECT
 
     public:
-        explicit Message(Ekos::Manager *manager, QVector<QSharedPointer<NodeManager>> &nodeManagers);
+        explicit Message(Ekos::Manager *manager, QVector<QSharedPointer<NodeManager >> &nodeManagers);
         virtual ~Message() = default;
 
         bool isConnected() const;
@@ -34,7 +34,7 @@ class Message : public QObject
         {
             QString device;
             QString name;
-            bool operator==(const PendingProperty &other) const
+            bool operator == (const PendingProperty &other) const
             {
                 return device == other.device && name == other.name;
             }
@@ -131,6 +131,8 @@ class Message : public QObject
         void sendDialog(const QJsonObject &message);
         void processDialogResponse(const QJsonObject &payload);
 
+        void sendMosaicTiles(const QJsonObject &tiles);
+
         // Process properties
         void processNewProperty(INDI::Property prop);
         void processDeleteProperty(INDI::Property prop);
@@ -214,11 +216,14 @@ class Message : public QObject
         void dispatchDebounceQueue();
 
         KStarsDateTime getNextDawn();
+        QJsonObject getRiseSetAltitudeDataForDay(SkyObject *oneObject, const KStarsDateTime &ut, GeoLocation *geo,
+                const QDate &date);
 
         void sendResponse(const QString &command, const QJsonObject &payload);
         void sendResponse(const QString &command, const QJsonArray &payload);
         void sendResponse(const QString &command, const QString &payload);
         void sendResponse(const QString &command, bool payload);
+        void sendEvent(const QString &command, const QJsonObject &payload);
 
         void sendPendingProperties();
 
@@ -230,30 +235,31 @@ class Message : public QObject
             bool boolean;
             QString text;
             QUrl url;
+            QSize size;
         } SimpleTypes;
 
         QObject *findObject(const QString &name);
         void invokeMethod(QObject *context, const QJsonObject &payload);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
-        bool parseArgument(QVariant::Type type, const QVariant &arg, QMetaMethodArgument &genericArg, SimpleTypes &types);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        bool parseArgument(QMetaType::Type type, const QVariant &arg, QMetaMethodArgument &genericArg, SimpleTypes &types);
 #else
         bool parseArgument(QVariant::Type type, const QVariant &arg, QGenericArgument &genericArg, SimpleTypes &types);
 #endif
         Ekos::Manager *m_Manager { nullptr };
-        QVector<QSharedPointer<NodeManager>> m_NodeManagers;
+        QVector < QSharedPointer < NodeManager >> m_NodeManagers;
 
         bool m_sendBlobs { true};
 
-        QMap<QString, QSet<QString>> m_PropertySubscriptions;
+        QMap < QString, QSet < QString >> m_PropertySubscriptions;
         QLineF correctionVector;
         QRect m_BoundingRect;
         QSize m_ViewSize;
         double m_CurrentZoom {100};
 
-        QSet<PendingProperty> m_PendingProperties;
+        QSet < PendingProperty > m_PendingProperties;
         QTimer m_PendingPropertiesTimer;
         QTimer m_DebouncedSend;
-        QMap<QString, QVariantMap> m_DebouncedMap;
+        QMap < QString, QVariantMap > m_DebouncedMap;
 
         QDateTime m_ThrottleTS;
         CatalogsDB::DBManager m_DSOManager;
@@ -273,7 +279,7 @@ class Message : public QObject
 
 inline uint qHash(const Message::PendingProperty &key, uint seed = 0) noexcept
 {
-    return qHash(key.device, seed) ^ qHash(key.name, seed);
+    return static_cast < uint > (qHash(key.device, seed) ^ qHash(key.name, seed));
 }
 
 }

@@ -10,32 +10,51 @@ Included with KStars is Ekos astrophotography suite, a complete astrophotography
 
 ## Copyright
 
-Copyright (c) 2001 - 2024 by The KStars Team:
+Copyright (c) 2001 - 2025 by The KStars Team:
 
 KStars is Free Software, released under the GNU Public License. See COPYING for GPL license information.
 
 ## Downloads
 
-KStars is available for Windows, MacOS, and Linux. You can download the latest version from [KStars official website](https://edu.kde.org/kstars).
+KStars is available for Windows, MacOS, and Linux. You can download the latest version from [KStars official website](https://kstars.kde.org).
 
-On Linux, it is available for most Linux distributions.
+## Flatpak
+On Linux, it is available for most Linux distributions. For Linux, it is recommened to install the [KStars Flatpak](https://flathub.org/en/apps/org.kde.kstars) since it provide a sandboxed KStars along with all INDI drivers pre-installed.
 
-Latest stable version is v3.6.8
+### Stable Flatpak
+Add flathub repository:
+```
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+```
+Install KStars:
+```
+flatpak install flathub org.kde.kstars
+```
+
+### Nightly Flatpak
+You can also install alongside the stable Flatpak the nightly Flatpak by adding KStars Nightly repository:
+```
+flatpak remote-add --user --if-not-exists kstars-nightly https://origin.cdn.kde.org/flatpak/kstars-nightly/kstars-nightly.flatpakrepo
+```
+Then install KStars Nightly:
+```
+flatpak install --user kstars-nightly org.kde.kstars//master
+```
+
+Latest stable version is v3.7.9
 
 ## Important URLs and files.
 
-* The [KStars homepage](https://edu.kde.org/kstars)
+* The [KStars homepage](https://kstars.kde.org)
 * KStars [Git Repository](https://invent.kde.org/education/kstars)
 * KStars [Web Chat](https://webchat.kde.org/#/room/#kstars:kde.org)
 * Forum [where KStars is often discussed](https://indilib.org/forum.html)
 
 ## KStars documentation
 
-The KStars handbook can be found in your $(KDEDIR)/share/doc/HTML/<lang>/kstars/
-directory.  You can also easily access it from the Help menu, or by pressing
-the [F1] key, or by visiting https://docs.kde.org/?application=kstars
-Unfortunately, it's a bit out-of-date. We welcome volunteers to help
-update it.
+KStars [online documentation](https://kstars.kde.org/) is avaialble in several languages. It is writtetn using Restructured Text and maintain ined in the KStars [Documentation Repository](https://invent.kde.org/documentation/kstars-docs-kde-org).
+
+We welcome any improvements to the online documentation!
 
 In addition, there are the following README files:
 
@@ -52,7 +71,7 @@ Note: Previously KStars used Phabricator for its merge requests. That system is 
 
 ### Integrated Development Environment IDE
 
-If you plan to develop KStars, it is highly recommended to utilize an IDE. You can use any IDE of your choice, but QtCreator(https://www.qt.io/product) or KDevelop(https://www.kdevelop.org) are recommended as they are more suited for Qt/KDE development.
+If you plan to develop KStars, it is highly recommended to utilize an Integrated Development Environment (IDE) You can use any IDE of your choice, but [Visual Studio Code](https://code.visualstudio.com/),  [Qt Creator](https://www.qt.io/product/development-tools) or [KDevelop](https://www.kdevelop.org) are recommended as they are more suited for Qt/KDE development.
 
 To open KStars in QtCreator, select the CMakeLists.txt file in the KStars source folder and then configure the build location and type.
 
@@ -66,7 +85,7 @@ To build and develop KStars, several packages may be required from your distribu
     * GNU Make, GCC -- Essential tools for building
     * cmake -- buildsystem used by KDE
     * Qt Library > 5.12.0
-    * Several KDE Frameworks: KConfig, KDocTools, KGuiAddons, KWidgetsAddons, KNewStuff, KI18n, KInit, KIO, KXmlGui, KPlotting, KIconThemes
+    * Several KDE Frameworks: KConfig, KGuiAddons, KWidgetsAddons, KNewStuff, KI18n, KInit, KIO, KXmlGui, KPlotting, KIconThemes
     * eigen -- linear algebra library
     * zlib -- compression library
     * StellarSolver -- see [https://github.com/rlancaste/stellarsolver](https://github.com/rlancaste/stellarsolver)
@@ -79,7 +98,9 @@ To build and develop KStars, several packages may be required from your distribu
     * libraw
     * wcslib
     * libgsl
+    * libxisf
     * qtkeychain
+    * sentry
 
 
 2. Installing Prerequisites
@@ -89,12 +110,30 @@ Debian/Ubuntu
 The apt-add-respository command is needed for the apt-get's libstellarsolver-dev. Alternatively, you can skip the apt-add-repository, remove the libstellarsolver-dev from the apt-get, and build & install stellarsolver from https://github.com/rlancaste/stellarsolver.
 ```
 sudo apt-add-repository ppa:mutlaqja/ppa
-sudo apt-get -y install build-essential cmake git libstellarsolver-dev libxisf-dev libeigen3-dev libcfitsio-dev zlib1g-dev libindi-dev extra-cmake-modules libkf5plotting-dev libqt5svg5-dev libkf5xmlgui-dev libkf5kio-dev kinit-dev libkf5newstuff-dev libkf5doctools-dev libkf5notifications-dev qtdeclarative5-dev libkf5crash-dev gettext libnova-dev libgsl-dev libraw-dev libkf5notifyconfig-dev wcslib-dev libqt5websockets5-dev xplanet xplanet-images qt5keychain-dev libsecret-1-dev breeze-icon-theme libqt5datavisualization5-dev
+sudo apt-get -y install build-essential cmake git libstellarsolver-dev libxisf-dev libeigen3-dev libcfitsio-dev zlib1g-dev libindi-dev extra-cmake-modules libkf5plotting-dev libqt5svg5-dev libkf5xmlgui-dev libkf5kio-dev kinit-dev libkf5newstuff-dev libkf5notifications-dev qtdeclarative5-dev libkf5crash-dev gettext libnova-dev libgsl-dev libraw-dev libkf5notifyconfig-dev wcslib-dev libqt5websockets5-dev xplanet xplanet-images qt5keychain-dev libsecret-1-dev breeze-icon-theme libqt5datavisualization5-dev
 ```
 
 Fedora
+
+Note: the current version of stellarsolver included in fedora is QT6 based and doesn't include the QT5 libs needed for kstars. Instead build the last
+QT5 based version of stellarsolver after installing other dependencies.
+
 ```
-yum install cfitsio-devel eigen3-devel stellarsolver-devel cmake extra-cmake-modules.noarch xisf-devel kf5-kconfig-devel kf5-kdbusaddons-devel kf5-kdoctools-devel kf5-kguiaddons-devel kf5-ki18n-devel kf5-kiconthemes-devel kf5-kinit-devel kf5-kio-devel kf5-kjobwidgets-devel kf5-knewstuff-devel kf5-kplotting-devel kf5-ktexteditor-devel kf5-kwidgetsaddons-devel kf5-kwindowsystem-devel kf5-kxmlgui-devel libindi-devel libindi-static qt5-qtdeclarative-devel qt5-qtmultimedia-devel qt5-qtdatavis3d-devel qt5-qtsvg-devel wcslib-devel xplanet zlib-devel
+sudo dnf install -y cfitsio-devel eigen3-devel cmake extra-cmake-modules.noarch libXISF-devel kf5-kconfig-devel kf5-kdbusaddons-devel kf5-kguiaddons-devel kf5-ki18n-devel kf5-kiconthemes-devel kf5-kinit-devel kf5-kio-devel kf5-kjobwidgets-devel kf5-knewstuff-devel kf5-kplotting-devel kf5-ktexteditor-devel kf5-kwidgetsaddons-devel kf5-kwindowsystem-devel kf5-kxmlgui-devel libindi-devel libindi-static qt5-qtdeclarative-devel qt5-qtmultimedia-devel qt5-qtdatavis3d-devel qt5-qtsvg-devel wcslib-devel xplanet zlib-devel qt5-qtwebsockets-devel kf5-kcrash-devel kf5-knotifications-devel gsl-devel libnoval-devel libcurl-devel
+
+cd /tmp
+git clone --branch 2.6 https://github.com/rlancaste/stellarsolver.git
+cd stellarsolver/linux-scripts/
+./installStellarSolverLibraryQt5.sh 
+```
+
+### Qt6 Support (Recommended)
+
+We recommend using Qt6 for building KStars as we phase out Qt5 support. For optimal compatibility, we suggest using the latest Ubuntu or Arch Linux.
+
+Arch Linux packages for Qt6:
+```
+sudo pacman -S base-devel cmake git eigen cfitsio zlib extra-cmake-modules kplotting qt6-svg kxmlgui kio knewstuff kdoctools knotifications qt6-declarative kcrash gettext libxisf libnova gsl libraw knotifyconfig wcslib qt6-websockets xplanet qtkeychain-qt6 libsecret breeze-icons qt6-quick3d curl stellarsolver
 ```
 
 3. Compiling
@@ -112,6 +151,19 @@ sudo make install
 
 To run KStars, simply type **kstars** in the terminal.
 
+#### Compiling with Qt6
+
+If you are building with Qt6, you need to add the `-DBUILD_WITH_QT6=ON` flag to the cmake command:
+```
+mkdir -p ~/Projects/build/kstars
+cd ~/Projects
+git clone https://invent.kde.org/education/kstars.git
+cd build/kstars
+cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_QT6=ON ~/Projects/kstars
+make -j16
+sudo make install
+```
+
 ### Code Style
 
 KStars uses [Artistic Style](http://astyle.sourceforge.net) to format all the C++ source files. Please make sure to apply the following astyle rules to any code that is submitted to INDI. On Linux, you can create ***~/.astylerc*** file containing the following rules:
@@ -128,14 +180,9 @@ KStars uses [Artistic Style](http://astyle.sourceforge.net) to format all the C+
 ```
 Some IDEs (e.g. QtCreator) support automatic formatting for the code every time you save the file to disk.
 
-### Making Updates to the Handbook
+### Making Updates to the Manual
 
-On linux run the following to install the necessary programs:
-
-```
-sudo apt-get install docbook docbook-utils
-```
-
+KStars online documentation is hosted 
 The source for the handbook is in kstars/doc.
 You can edit those files, include them in commits and MRs like you would c++ files (see below).
 You could figure out the markup by example, or learn from [online doc for docbook](https://opensource.com/article/17/9/docbook).
@@ -146,7 +193,7 @@ and you don't want to commit the generated files to your git repository.
 ```
 cp -pr kstars/doc ~/DOCBOOK
 cd ~/DOCBOOK
-meinproc5 index.docbook
+meinproc6 index.docbook
 ```
 
 The above should generate html files. Then, in a browser, you can simply open DOCBOOK/index.html and navigate your way to the part you want, e.g. just type something similar to this in the url bar of chrome: file:///home/YOUR_USER_NAME/DOCBOOK/doc/tool-ekos.html

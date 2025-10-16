@@ -37,13 +37,20 @@
 #include <QPointer>
 #include <QProcessEnvironment>
 #include <QLoggingCategory>
+#include <QMutex>
+#include <QMutexLocker>
+#include <thread>
 
 #ifdef HAVE_STELLARSOLVER
 #include <stellarsolver.h>
+#undef Const
 #endif
 
 namespace KSUtils
 {
+// Added for thread-safe logging
+static QMutex s_logMutex;
+
 bool isHardwareLimited()
 {
 #ifdef __arm__
@@ -51,6 +58,11 @@ bool isHardwareLimited()
 #else
     return false;
 #endif
+}
+
+bool isFlatpak()
+{
+    return QProcessEnvironment::systemEnvironment().contains("FLATPAK_ID");
 }
 
 bool openDataFile(QFile &file, const QString &s)
@@ -922,6 +934,36 @@ QString constGenetiveToAbbrev(const QString &genetive_)
 }
 
 QString Logging::_filename;
+std::deque<LogEntry> Logging::s_logQueue;
+std::mutex Logging::s_queueMutex;
+std::condition_variable Logging::s_condition;
+std::atomic<bool> Logging::s_running(false);
+std::thread Logging::s_loggingThread;
+
+void Logging::processLogEntries()
+{
+    while (s_running || !s_logQueue.empty())
+    {
+        std::unique_lock<std::mutex> lock(s_queueMutex);
+        s_condition.wait(lock, [] { return !s_logQueue.empty() || !s_running; });
+
+        if (!s_running && s_logQueue.empty())
+        {
+            break;
+        }
+
+        LogEntry entry = s_logQueue.front();
+        s_logQueue.pop_front();
+        lock.unlock();
+
+        QMessageLogContext context(entry.fileData.constData(),
+                                   entry.line,
+                                   entry.functionData.constData(),
+                                   entry.categoryData.constData());
+        context.version = entry.version;
+        writeLogEntry(entry.type, context, entry.msg);
+    }
+}
 
 void Logging::UseFile()
 {
@@ -942,6 +984,12 @@ void Logging::UseFile()
         file.close();
     }
 
+    if (!s_running)
+    {
+        s_running = true;
+        s_loggingThread = std::thread(processLogEntries);
+    }
+
     qSetMessagePattern("[%{time yyyy-MM-dd h:mm:ss.zzz t} "
                        "%{if-debug}DEBG%{endif}%{if-info}INFO%{endif}%{if-warning}WARN%{"
                        "endif}%{if-critical}CRIT%{endif}%{if-fatal}FATL%{endif}] "
@@ -949,14 +997,43 @@ void Logging::UseFile()
     qInstallMessageHandler(File);
 }
 
-void Logging::File(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+void Logging::Shutdown()
 {
+    s_running = false;
+    s_condition.notify_one(); // Notify the logging thread to wake up and exit
+    if (s_loggingThread.joinable())
+    {
+        s_loggingThread.join();
+    }
+}
+
+void Logging::writeLogEntry(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    QMutexLocker locker(&s_logMutex);
     QFile file(_filename);
     if (file.open(QFile::Append | QIODevice::Text))
     {
         QTextStream stream(&file);
         Write(stream, type, context, msg);
     }
+}
+
+void Logging::File(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    LogEntry entry;
+    entry.type = type;
+    entry.categoryData = context.category ? QByteArray(context.category) : QByteArray();
+    entry.fileData = context.file ? QByteArray(context.file) : QByteArray();
+    entry.functionData = context.function ? QByteArray(context.function) : QByteArray();
+    entry.line = context.line;
+    entry.version = context.version;
+    entry.msg = msg;
+
+    {
+        std::lock_guard<std::mutex> lock(s_queueMutex);
+        s_logQueue.push_back(entry);
+    }
+    s_condition.notify_one();
 }
 
 void Logging::UseStdout()
@@ -971,20 +1048,49 @@ void Logging::UseStdout()
 void Logging::Stdout(QtMsgType type, const QMessageLogContext &context,
                      const QString &msg)
 {
-    QTextStream stream(stdout, QIODevice::WriteOnly);
-    Write(stream, type, context, msg);
+    LogEntry entry;
+    entry.type = type;
+    entry.categoryData = context.category ? QByteArray(context.category) : QByteArray();
+    entry.fileData = context.file ? QByteArray(context.file) : QByteArray();
+    entry.functionData = context.function ? QByteArray(context.function) : QByteArray();
+    entry.line = context.line;
+    entry.version = context.version;
+    entry.msg = msg;
+
+    {
+        std::lock_guard<std::mutex> lock(s_queueMutex);
+        s_logQueue.push_back(entry);
+    }
+    s_condition.notify_one();
 }
 
 void Logging::UseStderr()
 {
+    if (!s_running)
+    {
+        s_running = true;
+        s_loggingThread = std::thread(processLogEntries);
+    }
     qInstallMessageHandler(Stderr);
 }
 
 void Logging::Stderr(QtMsgType type, const QMessageLogContext &context,
                      const QString &msg)
 {
-    QTextStream stream(stderr, QIODevice::WriteOnly);
-    Write(stream, type, context, msg);
+    LogEntry entry;
+    entry.type = type;
+    entry.categoryData = context.category ? QByteArray(context.category) : QByteArray();
+    entry.fileData = context.file ? QByteArray(context.file) : QByteArray();
+    entry.functionData = context.function ? QByteArray(context.function) : QByteArray();
+    entry.line = context.line;
+    entry.version = context.version;
+    entry.msg = msg;
+
+    {
+        std::lock_guard<std::mutex> lock(s_queueMutex);
+        s_logQueue.push_back(entry);
+    }
+    s_condition.notify_one();
 }
 
 void Logging::Write(QTextStream &stream, QtMsgType type,
@@ -1096,10 +1202,9 @@ void Logging::SyncFilterRules()
 QString getDefaultPath(const QString &option)
 {
     // We support running within Snaps, Flatpaks, and AppImage
-    // The path should accomodate the differences between the different
+    // The path should accommodate the differences between the different
     // packaging solutions
     QString snap   = QProcessEnvironment::systemEnvironment().value("SNAP");
-    QString flat   = QProcessEnvironment::systemEnvironment().value("FLATPAK_ID");
     QString appimg = QProcessEnvironment::systemEnvironment().value("APPDIR");
 
     // User prefix is the primary mounting point
@@ -1110,12 +1215,13 @@ QString getDefaultPath(const QString &option)
     if (QProcessEnvironment::systemEnvironment().value("APPIMAGE").isEmpty() == false &&
             appimg.isEmpty() == false)
         prefix = appimg + userPrefix;
-    else if (flat.isEmpty() == false)
+    else if (isFlatpak())
         // Detect if we are within a Flatpak
         prefix = "/app";
     // Detect if we are within a snap
     else if (snap.isEmpty() == false)
         prefix = snap + userPrefix;
+
 
     if (option == "fitsDir")
     {
@@ -1300,6 +1406,7 @@ bool setupMacKStarsIfNeeded() // This method will return false if the KStars dat
     //This will copy the locale folder, the notifications folder, and the sounds folder and any missing files in them to Application Support if needed.
     copyResourcesFolderFromAppBundle("locale");
     copyResourcesFolderFromAppBundle("knotifications5");
+    copyResourcesFolderFromAppBundle("knotifications6");
     copyResourcesFolderFromAppBundle("sounds");
 
     //This will copy the KStars data directory
@@ -1550,7 +1657,7 @@ bool addAstrometryDataDir(const QString &dataDir)
                 }
                 else
                 {
-                    //Do not keep adding the other add_paths because they just got added in the seciton above.
+                    //Do not keep adding the other add_paths because they just got added in the section above.
                 }
             }
             else

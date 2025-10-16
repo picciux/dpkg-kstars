@@ -16,6 +16,8 @@
 #include <QWidget>
 #include "ui_fitsheaderdialog.h"
 #include "ui_statform.h"
+#include "ui_platesolve.h"
+#include "ui_livestacking.h"
 #include "ui_catalogobject.h"
 #include "ui_catalogobjecttypefilter.h"
 #include <QFuture>
@@ -69,6 +71,7 @@ class FITSTab : public QWidget
         void clearRecentFITS();
         void selectRecentFITS(int i);
         void loadFile(const QUrl &imageURL, FITSMode mode = FITS_NORMAL, FITSScale filter = FITS_NONE);
+
         bool loadData(const QSharedPointer<FITSData> &data, FITSMode mode = FITS_NORMAL, FITSScale filter = FITS_NONE);
 
         // Methods to setup and control blinking--loading a directory of images one-by-one
@@ -90,6 +93,28 @@ class FITSTab : public QWidget
             if (index >= 0 && index < m_BlinkFilenames.size())
                 m_BlinkIndex = index;
         };
+
+        /**
+         * @brief Initialise Live Stacking processing
+         */
+        void initStack(const QString &dir, FITSMode mode = FITS_LIVESTACKING, FITSScale filter = FITS_NONE);
+
+        void setTabName(const QString &name)
+        {
+            m_TabName = name;
+        }
+        /**
+         * @brief Gets the name of this tab, which may be set by the user.
+         */
+        QString getTabName()
+        {
+            return m_TabName;
+        }
+
+        /**
+         * @brief Like tabName, but may include the number of subs stacked in this tab.
+         */
+        QString getTabTitle() const;
 
         bool saveImage(const QString &filename);
 
@@ -155,6 +180,7 @@ class FITSTab : public QWidget
         void ZoomDefault();
         void displayStats(bool roi = false);
         void extractImage();
+        void liveStack();
 
     protected:
         virtual void closeEvent(QCloseEvent *ev) override;
@@ -176,6 +202,9 @@ class FITSTab : public QWidget
         /// The Statistics Panel
         QPointer<QDialog> statWidget;
         Ui::statForm stat;
+        /// The Live Stacking UI
+        QPointer<QDialog> m_LiveStackingWidget;
+        Ui::LiveStackingUI m_LiveStackingUI;
         /// Catalog Object UI
         QPointer<QDialog> m_CatalogObjectWidget;
         Ui::CatalogObjectUI m_CatalogObjectUI;
@@ -233,6 +262,11 @@ class FITSTab : public QWidget
         void launchNED(QString name);
         void initCatalogObject();
         void setupCatObjTypeFilter();
+        void initLiveStacking();
+        void selectLiveStack();
+        void selectLiveStackMasterDark();
+        void selectLiveStackMasterFlat();
+        void selectLiveStackAlignSub();
         void applyTypeFilter();
         void checkAllTypeFilter();
         void uncheckAllTypeFilter();
@@ -245,7 +279,36 @@ class FITSTab : public QWidget
         QList<QString> m_BlinkFilenames;
         int m_BlinkIndex { 0 };
 
-        QSharedPointer<PlateSolve> m_PlateSolve;
+        QPointer<PlateSolve> m_PlateSolve;
+
+        // Live Stacking
+        void plateSolveSub(const double ra, const double dec, const double pixScale, const int index,
+                           const int healpix, const LiveStackFrameWeighting &weighting);
+        void stackInProgress();
+        void alignMasterChosen(const QString &alignMaster);
+        void stackUpdateStats(const bool ok, const int sub, const int total, const double meanSNR, const double minSNR,
+                              const double maxSNR);
+        void updateStackSNR(const double SNR);
+        void resetStack(const bool cancelled);
+        void saveSettings();
+        void initSettings();
+        LiveStackData getAllSettings();
+        LiveStackPPData getPPSettings();
+        void redoPostProcessing();
+
+        int m_LiveStackingItem { 0 };
+        bool m_StackExtracted { false };
+        QString m_liveStackDir;
+        QString m_CurrentStackDir;
+        QString m_TabName;
+        bool m_StackStarted { false };
+        bool m_StackCancelled { false };
+        int m_StackSubsTotal { 0 };
+        int m_StackSubsProcessed { 0 };
+        int m_StackSubsFailed { 0 };
+        double m_StackMedianHFR { -1.0 };
+        int m_StackNumStars { 0 };
+        bool m_StackExtendedPlateSolve { false };
 
     signals:
         void debayerToggled(bool);

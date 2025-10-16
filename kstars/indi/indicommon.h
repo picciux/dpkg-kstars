@@ -74,7 +74,7 @@ Now suppose an updated Number property arrives from INDI server, the ClientManag
 property to the device, which is now of type ISD::Mount. The ISD::Mount overridden the processNumber(INumberVectorProperty *nvp) function in ISD::DeviceDecorator because it wants to handle some telescope
 specific numbers such as EQUATORIAL_EOD_COORD in order to move the telescope marker on the sky map as it changes. If the received property was indeed EQUATORIAL_EOD_COORD or any property handled
 by the ISD::Mount ProcessNumber() function, then there is no further action needed. But what if the property is not processed in ISD::Mount ProcessNumber() function? In this case, the
-ProcessNumber() function simply calls DeviceDecorator::ProcessNumber() and it will delgate the call to ISD::GenericDevice ProcessNumber() to process. This is how the Decorator pattern work,
+ProcessNumber() function simply calls DeviceDecorator::ProcessNumber() and it will delegate the call to ISD::GenericDevice ProcessNumber() to process. This is how the Decorator pattern work,
 the decorator classes implements extended functionality, but the basic class is still responsible for handling all of the basic functions.
 
 */
@@ -124,8 +124,12 @@ typedef enum
     KSTARS_SPECTROGRAPHS,
     KSTARS_TELESCOPE,
     KSTARS_WEATHER,
+    KSTARS_POWER,
     KSTARS_UNKNOWN
 } DeviceFamily;
+
+DeviceFamily toDeviceFamily(const QString &family);
+QString fromDeviceFamily(DeviceFamily family);
 
 const QMap<DeviceFamily, QString> DeviceFamilyLabels =
 {
@@ -141,6 +145,7 @@ const QMap<DeviceFamily, QString> DeviceFamilyLabels =
     {KSTARS_SPECTROGRAPHS, "Spectrographs"},
     {KSTARS_TELESCOPE, "Telescopes"},
     {KSTARS_WEATHER, "Weather"},
+    {KSTARS_POWER, "Power"},
     {KSTARS_UNKNOWN, "Unknown"},
 };
 

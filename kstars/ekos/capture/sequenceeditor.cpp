@@ -64,6 +64,14 @@ void SequenceEditor::showEvent(QShowEvent* event)
     m_camera->onStandAloneShow(event);
 }
 
+bool SequenceEditor::loadSequenceQueue(const QString &fileURL, QString targetName)
+{
+    if (m_camera.isNull())
+        return false;
+    else
+        return m_camera->loadSequenceQueue(fileURL, targetName);
+}
+
 void SequenceEditor::initStandAlone()
 {
     QSharedPointer<Camera> mainCam = m_camera;
@@ -115,9 +123,9 @@ void SequenceEditor::onStandAloneShow()
     m_camera->loadSaveBox->setEnabled(true);
     m_camera->loadSaveBox->setVisible(true);
     connect(m_camera->esqSaveAsB, &QPushButton::clicked, m_camera.get(),
-            &Camera::saveSequenceQueueAs);
+            &Camera::saveSequenceQueueAs, Qt::UniqueConnection);
     connect(m_camera->esqLoadB, &QPushButton::clicked, m_camera.get(),
-            static_cast<void(Camera::*)()>(&Camera::loadSequenceQueue));
+            static_cast<void(Camera::*)()>(&Camera::loadSequenceQueue), Qt::UniqueConnection);
 
     m_camera->FilterPosCombo->clear();
     if (m_Settings.contains(KEY_FILTERS))

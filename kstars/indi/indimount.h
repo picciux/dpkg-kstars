@@ -41,12 +41,12 @@ class Mount : public ConcreteDevice
         {
             switch (ps)
             {
-            case ISD::Mount::PierSide::PIER_EAST:
-                return "Pier Side: East (pointing West)";
-            case ISD::Mount::PierSide::PIER_WEST:
-                return "Pier Side: West (pointing East)";
-            default:
-                return "Pier Side: Unknown";
+                case ISD::Mount::PierSide::PIER_EAST:
+                    return "Pier Side: East (pointing West)";
+                case ISD::Mount::PierSide::PIER_WEST:
+                    return "Pier Side: West (pointing East)";
+                default:
+                    return "Pier Side: Unknown";
             }
         }
 
@@ -63,8 +63,9 @@ class Mount : public ConcreteDevice
         typedef enum { PARK_OPTION_CURRENT, PARK_OPTION_DEFAULT, PARK_OPTION_WRITE_DATA } ParkOptionCommand;
         typedef enum { TRACK_SIDEREAL, TRACK_SOLAR, TRACK_LUNAR, TRACK_CUSTOM } TrackModes;
 
-
         static const QList<KLocalizedString> mountStates;
+        static const QString getMountStatusString(Status status, bool translated = true);
+        static ISD::Mount::Status toMountStatus(const QString &str);
 
         void registerProperty(INDI::Property prop) override;
         void processSwitch(INDI::Property prop) override;
@@ -79,8 +80,8 @@ class Mount : public ConcreteDevice
         }
 
         // Slew
-        bool Slew(SkyPoint *ScopeTarget, bool flip=false);
-        bool Slew(double ra, double dec, bool flip=false);
+        bool Slew(SkyPoint *ScopeTarget, bool flip = false);
+        bool Slew(double ra, double dec, bool flip = false);
         bool canGoto()
         {
             return m_canGoto;
@@ -157,7 +158,7 @@ class Mount : public ConcreteDevice
             return m_ParkStatus;
         }
 
-        Status status(INumberVectorProperty *nvp);
+        Status status(INDI::Property nvp);
         Status status();
         const QString statusString(Status status, bool translated = true) const;
 
@@ -200,7 +201,7 @@ class Mount : public ConcreteDevice
          * @short Tracks satellite on provided TLE, initial epoch for trajectory calculation and window in minutes
          *
          * This function needs a Two-Line-Element and a time window in the form of an initial point and a
-         * number of minutes on which the trajectory should start. The function was developed wiht the lx200
+         * number of minutes on which the trajectory should start. The function was developed with the lx200
          * in mind. If the trajectory has already started, the current time and a window of 1min are sufficient.
          *
          * @param tle Two-line-element.
@@ -235,7 +236,7 @@ class Mount : public ConcreteDevice
          * @brief Send the coordinates to the mount's INDI driver. Due to the INDI implementation, this
          * function is shared for syncing, slewing and other (partly scope specific) functions like the
          * setting parking position. The interpretation of the coordinates depends in the setting of other
-         * INDI switches for slewing, synching, tracking etc.
+         * INDI switches for slewing, syncing, tracking etc.
          * @param ScopeTarget target coordinates
          * @return true if sending the coordinates succeeded
          */

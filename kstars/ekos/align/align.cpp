@@ -245,6 +245,14 @@ Align::Align(const QSharedPointer<ProfileInfo> &activeProfile) : m_ActiveProfile
     m_StellarSolver.reset(new StellarSolver());
     connect(m_StellarSolver.get(), &StellarSolver::logOutput, this, &Align::appendLogText);
 
+    // Initialize dynamic threshold after profiles are loaded
+    resetDynamicThreshold();
+
+    // Connect to options profile changes
+    connect(Options::self(), &Options::SolveOptionsProfileChanged, this,
+            &Ekos::Align::resetDynamicThreshold);
+
+
     setupPolarAlignmentAssistant();
     setupManualRotator();
     setuptDarkProcessor();
@@ -1009,7 +1017,7 @@ void Align::getCalculatedFOVScale(double &fov_w, double &fov_h, double &fov_scal
     auto reducedFocalLength = m_Reducer * m_FocalLength;
     if (m_FocalRatio > 0)
     {
-        // The forumla is in radians, must convert to degrees.
+        // The formula is in radians, must convert to degrees.
         // Then to arcsecs
         fov_w = 3600 * 2 * atan(m_CameraWidth * (m_CameraPixelWidth / 1000.0) / (2 * reducedFocalLength)) / dms::DegToRad;
         fov_h = 3600 * 2 * atan(m_CameraHeight * (m_CameraPixelHeight / 1000.0) / (2 * reducedFocalLength)) / dms::DegToRad;
@@ -1064,7 +1072,7 @@ void Align::calculateFOV()
 
     if (m_FocalRatio > 0)
     {
-        // The forumla is in radians, must convert to degrees.
+        // The formula is in radians, must convert to degrees.
         // Then to arcsecs
         m_FOVWidth = 3600 * 2 * atan(m_CameraWidth * (m_CameraPixelWidth / 1000.0) / (2 * reducedFocalLength)) / dms::DegToRad;
         m_FOVHeight = 3600 * 2 * atan(m_CameraHeight * (m_CameraPixelHeight / 1000.0) / (2 * reducedFocalLength)) / dms::DegToRad;
@@ -1558,7 +1566,7 @@ bool Align::captureAndSolve(bool initialCall)
             case 0:// Set start time & start angle and estimate rotator time frame during first timeout
             {
                 auto absAngle = 0;
-                if ((absAngle = m_Rotator->getNumber("ABS_ROTATOR_ANGLE")->at(0)->getValue()))
+                if ((absAngle = m_Rotator->getNumber("ABS_ROTATOR_ANGLE")[0].getValue()))
                 {
                     RotatorUtils::Instance()->startTimeFrame(absAngle);
                     m_estimateRotatorTimeFrame = true;
@@ -1902,6 +1910,11 @@ void Align::startSolving()
         }
 
         params.partition = Options::stellarSolverPartition();
+        // Apply dynamic threshold
+        params.threshold_bg_multiple = m_dynamicThreshold;
+        // If dynamic threshold is enabled and set to 1, then we use the default conv filter of the solver
+        if (m_dynamicThreshold == 1 && Options::astrometryDynamicThreshold())
+            params.convFilterType = CONV_DEFAULT;
         m_StellarSolver->setParameters(params);
 
         const SSolver::SolverType type = static_cast<SSolver::SolverType>(m_StellarSolver->property("SolverType").toInt());
@@ -1948,6 +1961,12 @@ void Align::startSolving()
             useImagePosition = false;
             useBlindPosition = BLIND_USED;
             appendLogText(i18n("Solving with blind image position..."));
+        }
+
+        if (useBlindDynamicThreshold == BLIND_ENGAGNED)
+        {
+            useBlindDynamicThreshold = BLIND_USED;
+            appendLogText(i18n("Solving with blind dynamic threshold..."));
         }
 
         if (m_SolveFromFile)
@@ -2182,7 +2201,7 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
         auto ccdRotation = m_Camera->getNumber("CCD_ROTATION");
         if (ccdRotation)
         {
-            auto rotation = ccdRotation->findWidgetByName("CCD_ROTATION_VALUE");
+            auto rotation = ccdRotation.findWidgetByName("CCD_ROTATION_VALUE");
             if (rotation)
             {
                 auto clientManager = m_Camera->getDriverInfo()->getClientManager();
@@ -2248,7 +2267,7 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
             if (auto absAngle = m_Rotator->getNumber("ABS_ROTATOR_ANGLE"))
                 // if (absAngle && std::isnan(m_TargetPositionAngle) == true)
             {
-                sRawAngle = absAngle->at(0)->getValue();
+                sRawAngle = absAngle[0].getValue();
                 double OffsetAngle = RotatorUtils::Instance()->calcOffsetAngle(sRawAngle, solverPA);
                 RotatorUtils::Instance()->updateOffset(OffsetAngle);
                 // Debug info
@@ -2256,7 +2275,7 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
                 auto reverseProperty = m_Rotator->getSwitch("ROTATOR_REVERSE");
                 if (reverseProperty)
                 {
-                    if (reverseProperty->at(0)->getState() == ISS_ON)
+                    if (reverseProperty[0].getState() == ISS_ON)
                         reverseStatus = "Reversed Direction";
                     else
                         reverseStatus = "Normal Direction";
@@ -2278,12 +2297,31 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
         {"de", SolverDecOut->text()},
         {"dRA", m_TargetDiffRA},
         {"dDE", m_TargetDiffDE},
+        {"dAZ", m_TargetDiffAZ},
+        {"dAL", m_TargetDiffAL},
         {"targetDiff", m_TargetDiffTotal},
         {"pix", pixscale},
         {"PA", solverPA},
         {"fov", FOVOut->text()},
     };
     emit newSolution(solution.toVariantMap());
+
+    // Adjust dynamic threshold if enabled
+    if (Options::astrometryDynamicThreshold())
+    {
+        int numStarsFound = m_StellarSolver->getNumStarsFound();
+        auto newThreshold = std::min(std::max(1.0,
+                                              numStarsFound < DYNAMIC_THRESHOLD_STARS ? m_dynamicThreshold / 2.0 : m_dynamicThreshold * 2.0),
+                                     64.0);
+
+        if (newThreshold != m_dynamicThreshold)
+        {
+            m_dynamicThreshold = newThreshold;
+            appendLogText(i18n("Dynamic threshold adjusted to %1 (stars found: %2).",
+                               QString::number(m_dynamicThreshold, 'f', 2), numStarsFound));
+        }
+    }
+
 
     setState(ALIGN_SUCCESSFUL);
     emit newStatus(state);
@@ -2405,6 +2443,33 @@ void Align::solverFailed()
         }
 
     }
+
+    // Adjust dynamic threshold if enabled
+    if (Options::astrometryDynamicThreshold())
+    {
+        int numStarsFound = m_StellarSolver->getNumStarsFound();
+        auto newThreshold = std::min(std::max(1.0,
+                                              numStarsFound < DYNAMIC_THRESHOLD_STARS ? m_dynamicThreshold / 2.0 : m_dynamicThreshold * 2.0),
+                                     64.0);
+
+        if (newThreshold != m_dynamicThreshold)
+        {
+            m_dynamicThreshold = newThreshold;
+            appendLogText(i18n("Dynamic threshold adjusted to %1 (stars found: %2).",
+                               QString::number(m_dynamicThreshold, 'f', 2), numStarsFound));
+
+            // Try to solve with dynamic threshold engaged, if not engaged already
+            if (useBlindDynamicThreshold == BLIND_IDLE)
+            {
+                appendLogText(i18n("Solver failed. Retrying with blind dynamic threshold."));
+                useBlindDynamicThreshold = BLIND_ENGAGNED;
+                setAlignTableResult(ALIGN_RESULT_FAILED);
+                captureAndSolve(false);
+                return;
+            }
+        }
+    }
+
     if (state != ALIGN_ABORTED)
     {
         // Try to solve with scale turned off, if not turned off already
@@ -2449,6 +2514,7 @@ void Align::solverFailed()
     m_CaptureErrorCounter = 0;
     m_CaptureTimeoutCounter = 0;
     m_SlewErrorCounter = 0;
+    useBlindDynamicThreshold = BLIND_IDLE;
 
     setState(ALIGN_FAILED);
     emit newStatus(state);
@@ -3263,8 +3329,8 @@ void Align::setWCSEnabled(bool enable)
     if (!wcsControl)
         return;
 
-    auto wcs_enable  = wcsControl->findWidgetByName("WCS_ENABLE");
-    auto wcs_disable = wcsControl->findWidgetByName("WCS_DISABLE");
+    auto wcs_enable  = wcsControl.findWidgetByName("WCS_ENABLE");
+    auto wcs_disable = wcsControl.findWidgetByName("WCS_DISABLE");
 
     if (!wcs_enable || !wcs_disable)
         return;
@@ -3272,7 +3338,7 @@ void Align::setWCSEnabled(bool enable)
     if ((wcs_enable->getState() == ISS_ON && enable) || (wcs_disable->getState() == ISS_ON && !enable))
         return;
 
-    wcsControl->reset();
+    wcsControl.reset();
     if (enable)
     {
         appendLogText(i18n("World Coordinate System (WCS) is enabled."));
@@ -3843,6 +3909,16 @@ void Align::setTargetPositionAngle(double value)
 
 void Align::calculateAlignTargetDiff()
 {
+    // Normal align: Target coords are destinations coords
+    // JM 2025.09.17: Calculate anyway, we don't need to take any actions.
+    m_TargetDiffRA = (m_AlignCoord.ra().deltaAngle(m_TargetCoord.ra())).Degrees() * 3600;  // arcsec
+    m_TargetDiffDE = (m_AlignCoord.dec().deltaAngle(m_TargetCoord.dec())).Degrees() * 3600;  // arcsec
+
+    // Must update target coordinate horizontal coordinates.
+    m_TargetCoord.EquatorialToHorizontal(KStarsData::Instance()->lst(), KStarsData::Instance()->geo()->lat());
+    m_TargetDiffAZ = (m_AlignCoord.az().deltaAngle(m_TargetCoord.az())).Degrees() * 3600;  // arcsec
+    m_TargetDiffAL = (m_AlignCoord.alt().deltaAngle(m_TargetCoord.alt())).Degrees() * 3600;  // arcsec
+
     if (matchPAHStage(PAA::PAH_FIRST_CAPTURE) ||
             matchPAHStage(PAA::PAH_SECOND_CAPTURE) ||
             matchPAHStage(PAA::PAH_THIRD_CAPTURE) ||
@@ -3853,15 +3929,13 @@ void Align::calculateAlignTargetDiff()
             syncR->isChecked())
         return;
 
-    if (!Options::astrometryDifferentialSlewing()) // Normal align: Target coords are destinations coords
-    {
-        m_TargetDiffRA = (m_AlignCoord.ra().deltaAngle(m_TargetCoord.ra())).Degrees() * 3600;  // arcsec
-        m_TargetDiffDE = (m_AlignCoord.dec().deltaAngle(m_TargetCoord.dec())).Degrees() * 3600;  // arcsec
-    }
-    else // Differential slewing: Target coords are new position coords
+    // Differential slewing: Target coords are new position coords
+    if (Options::astrometryDifferentialSlewing())
     {
         m_TargetDiffRA = (m_AlignCoord.ra().deltaAngle(m_DestinationCoord.ra())).Degrees() * 3600;  // arcsec
         m_TargetDiffDE = (m_AlignCoord.dec().deltaAngle(m_DestinationCoord.dec())).Degrees() * 3600;  // arcsec
+        m_TargetDiffAZ = (m_AlignCoord.az().deltaAngle(m_DestinationCoord.az())).Degrees() * 3600;  // arcsec
+        m_TargetDiffAL = (m_AlignCoord.alt().deltaAngle(m_DestinationCoord.alt())).Degrees() * 3600;  // arcsec
         qCDebug(KSTARS_EKOS_ALIGN) << "Differential slew - Solution RA:" << m_AlignCoord.ra().toHMSString()
                                    << " DE:" << m_AlignCoord.dec().toDMSString();
         qCDebug(KSTARS_EKOS_ALIGN) << "Differential slew - Destination RA:" << m_DestinationCoord.ra().toHMSString()
@@ -4603,4 +4677,24 @@ void Align::processCaptureTimeout()
         }
     }
 }
+
+void Align::resetDynamicThreshold()
+{
+    SSolver::Parameters params;
+    try
+    {
+        params = m_StellarSolverProfiles.at(Options::solveOptionsProfile());
+    }
+    catch (std::out_of_range const &)
+    {
+        params = m_StellarSolverProfiles[0];
+    }
+    auto newThreshold = params.threshold_bg_multiple;
+    if (newThreshold != m_dynamicThreshold)
+    {
+        m_dynamicThreshold = newThreshold;
+        qCInfo(KSTARS_EKOS_ALIGN) << "Dynamic threshold reset to" << QString::number(m_dynamicThreshold, 'f', 2);
+    }
+}
+
 }

@@ -11,6 +11,7 @@
 #include "fitshistogramcommand.h"
 #include "fitsview.h"
 #include "fitsviewer.h"
+#include "fitsmemmonitor.h"
 #include "ksnotification.h"
 #include "kstars.h"
 #include "Options.h"
@@ -30,7 +31,12 @@
 #include <QUrl>
 #include <QDialog>
 
+#include <KLocalizedString>
+
 constexpr int CAT_OBJ_SORT_ROLE = Qt::UserRole + 1;
+const auto TEXT_START = ki18n("Start");
+const auto TEXT_STOP = ki18n("Stop");
+const auto TEXT_STOPPING = ki18n("Stopping...");
 
 FITSTab::FITSTab(FITSViewer *parent) : QWidget(parent)
 {
@@ -40,8 +46,9 @@ FITSTab::FITSTab(FITSViewer *parent) : QWidget(parent)
     undoStack->clear();
     connect(undoStack, SIGNAL(cleanChanged(bool)), this, SLOT(modifyFITSState(bool)));
 
-    m_PlateSolve.reset(new PlateSolve(this));
+    m_PlateSolve = new PlateSolve(this);
     m_CatalogObjectWidget = new QDialog(this);
+    m_LiveStackingWidget = new QDialog(this);
     statWidget = new QDialog(this);
     fitsHeaderDialog = new QDialog(this);
     m_HistogramEditor = new FITSHistogramEditor(this);
@@ -109,7 +116,7 @@ bool FITSTab::setupView(FITSMode mode, FITSScale filter)
 {
     if (m_View.isNull())
     {
-        m_View.reset(new FITSView(this, mode, filter));
+        m_View.reset(new FITSView(nullptr, mode, filter));
         m_View->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         QVBoxLayout *vlayout = new QVBoxLayout();
 
@@ -135,15 +142,28 @@ bool FITSTab::setupView(FITSMode mode, FITSScale filter)
                 stat.statsTable->setSpan(i, 0, 1, 3);
         }
 
-        connect(m_PlateSolve.get(), &PlateSolve::clicked, this, &FITSTab::extractImage);
+        connect(m_PlateSolve.data(), &PlateSolve::clicked, this, &FITSTab::extractImage);
 
         fitsTools->addItem(statWidget, i18n("Statistics"));
-        fitsTools->addItem(m_PlateSolve.get(), i18n("Plate Solving"));
+        fitsTools->addItem(m_PlateSolve, i18n("Plate Solving"));
 
         // Setup the Catalog Object page
         m_CatalogObjectUI.setupUi(m_CatalogObjectWidget);
         m_CatalogObjectItem = fitsTools->addItem(m_CatalogObjectWidget, i18n("Catalog Objects"));
         initCatalogObject();
+
+        // Setup the Live Stacking page
+        if (mode == FITS_LIVESTACKING)
+        {
+            m_LiveStackingUI.setupUi(m_LiveStackingWidget);
+            m_LiveStackingUI.GeneralMinimizeWidget->setupUI(Options::fitsLSHideGeneral(), &Options::setFitsLSHideGeneral);
+            m_LiveStackingUI.CalibrationMinimizeWidget->setupUI(Options::fitsLSHideCalibration(), &Options::setFitsLSHideCalibration);
+            m_LiveStackingUI.AlignmentMinimizeWidget->setupUI(Options::fitsLSHideAlignment(), &Options::setFitsLSHideAlignment);
+            m_LiveStackingUI.StackingMinimizeWidget->setupUI(Options::fitsLSHideStacking(), &Options::setFitsLSHideStacking);
+            m_LiveStackingUI.PostProcMinimizeWidget->setupUI(Options::fitsLSHidePostProc(), &Options::setFitsLSHidePostProc);
+            m_LiveStackingItem = fitsTools->addItem(m_LiveStackingWidget, i18n("Live Stacking"));
+            initLiveStacking();
+        }
 
         fitsTools->addItem(m_HistogramEditor, i18n("Histogram"));
 
@@ -224,6 +244,46 @@ void FITSTab::loadFile(const QUrl &imageURL, FITSMode mode, FITSScale filter)
     m_View->setFilter(filter);
 
     m_View->loadFile(imageURL.toLocalFile());
+}
+
+// Initialise the stack - signalled once from FitsViewer
+void FITSTab::initStack(const QString &dir, FITSMode mode, FITSScale filter)
+{
+    // check if the address points to an appropriate address
+    if (dir.isEmpty() || !QFileInfo(dir).isDir())
+    {
+        emit failed(i18nc("Invalid directory: %1", dir.toLatin1()));
+        return;
+    }
+
+    if (setupView(mode, filter))
+    {
+        // On Success loading image
+        connect(m_View.get(), &FITSView::loaded, this, [&]()
+        {
+            processData();
+            emit loaded();
+        });
+
+        connect(m_View.get(), &FITSView::updated, this, &FITSTab::updated);
+    }
+    else
+        modifyFITSState(true, QUrl(dir));
+
+    m_View->setFilter(filter);
+
+    m_liveStackDir = m_CurrentStackDir = dir;
+    m_LiveStackingUI.Stack->setText(m_liveStackDir);
+
+    // Popup the Live Stacking pane
+    fitsTools->setCurrentIndex(m_LiveStackingItem);
+    fitsTools->show();
+    if(m_View->width() > 200)
+        fitsSplitter->setSizes(QList<int>() << 200 << m_View->width() - 200);
+    else
+        fitsSplitter->setSizes(QList<int>() << 50 << 50);
+
+    m_View->initStack();
 }
 
 bool FITSTab::shouldComputeHFR() const
@@ -838,6 +898,197 @@ void FITSTab::setupCatObjTypeFilter()
     connect(m_CatObjTypeFilterUI.tree, &QTreeWidget::itemChanged, this, &FITSTab::typeFilterItemChanged);
 }
 
+void FITSTab::initLiveStacking()
+{
+#if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
+    // Setup the memory monitor widget
+    m_LiveStackingUI.MemMonitor->setUpdateInterval(1000);
+    QString label = i18n("RAM");
+    m_LiveStackingUI.MemMonitor->setLabelFormat(label + ": %1 / %2");
+
+    // Set the GUI values
+    m_LiveStackingUI.SubsProcessed->setText(QString("%1 / %2 / %3").arg(0).arg(0).arg(0));
+    m_LiveStackingUI.SubsSNR->setText(QString("%1 / %2 / %3").arg(0).arg(0).arg(0));
+    m_LiveStackingUI.ImageSNR->setText(QString("%1").arg(0));
+    m_LiveStackingUI.AlignMaster->setText("");
+    initSettings();
+
+    // Manage connections
+    connect(m_LiveStackingUI.StackDirB, &QPushButton::clicked, this, &FITSTab::selectLiveStack);
+    connect(m_LiveStackingUI.StartB, &QPushButton::clicked, this, &FITSTab::liveStack);
+    connect(m_LiveStackingUI.SaveB, &QPushButton::clicked, this, &FITSTab::saveSettings);
+    connect(m_LiveStackingUI.ReprocessB, &QPushButton::clicked, this, &FITSTab::redoPostProcessing);
+    connect(m_LiveStackingUI.MasterDarkB, &QPushButton::clicked, this, &FITSTab::selectLiveStackMasterDark);
+    connect(m_LiveStackingUI.MasterFlatB, &QPushButton::clicked, this, &FITSTab::selectLiveStackMasterFlat);
+    connect(m_LiveStackingUI.AlignMasterB, &QPushButton::clicked, this, &FITSTab::selectLiveStackAlignSub);
+    connect(m_LiveStackingUI.PostProcGroupBox, &QGroupBox::toggled, this, &FITSTab::redoPostProcessing);
+
+    // Other connections used by Live Stacking
+    connect(m_View.get(), &FITSView::plateSolveSub, this, &FITSTab::plateSolveSub);
+    connect(m_View.get(), &FITSView::stackInProgress, this, &FITSTab::stackInProgress);
+    connect(m_View.get(), &FITSView::alignMasterChosen, this, &FITSTab::alignMasterChosen);
+    connect(m_View.get(), &FITSView::stackUpdateStats, this, &FITSTab::stackUpdateStats);
+    connect(m_View.get(), &FITSView::updateStackSNR, this, &FITSTab::updateStackSNR);
+    connect(m_View.get(), &FITSView::resetStack, this, &FITSTab::resetStack);
+#endif // !KSTARS_LITE, HAVE_WCSLIB, HAVE_OPENCV
+}
+
+void FITSTab::initSettings()
+{
+    m_LiveStackingUI.MasterDark->setText(Options::fitsLSMasterDark());
+    m_LiveStackingUI.MasterFlat->setText(Options::fitsLSMasterFlat());
+    m_LiveStackingUI.AlignMethod->setCurrentIndex(Options::fitsLSAlignMethod());
+    m_LiveStackingUI.NumInMem->setValue(Options::fitsLSNumInMem());
+    m_LiveStackingUI.LSDownscale->setCurrentIndex(Options::fitsLSDownscale());
+    m_LiveStackingUI.Weighting->setCurrentIndex(Options::fitsLSWeighting());
+    m_LiveStackingUI.Rejection->setCurrentIndex(Options::fitsLSRejection());
+    m_LiveStackingUI.LowSigma->setValue(Options::fitsLSLowSigma());
+    m_LiveStackingUI.HighSigma->setValue(Options::fitsLSHighSigma());
+    m_LiveStackingUI.WinsorCutoff->setValue(Options::fitsLSWinsorCutoff());
+    m_LiveStackingUI.PostProcGroupBox->setChecked(Options::fitsLSPostProc());
+    m_LiveStackingUI.DeconvAmt->setValue(Options::fitsLSDeconvAmt());
+    m_LiveStackingUI.PSFSigma->setValue(Options::fitsLSPSFSigma());
+    m_LiveStackingUI.DenoiseAmt->setValue(Options::fitsLSDenoiseAmt());
+    m_LiveStackingUI.SharpenAmt->setValue(Options::fitsLSSharpenAmt());
+    m_LiveStackingUI.SharpenKernal->setValue(Options::fitsLSSharpenKernal());
+    m_LiveStackingUI.SharpenSigma->setValue(Options::fitsLSSharpenSigma());
+}
+
+void FITSTab::saveSettings()
+{
+    Options::setFitsLSMasterDark(m_LiveStackingUI.MasterDark->text());
+    Options::setFitsLSMasterFlat(m_LiveStackingUI.MasterFlat->text());
+    Options::setFitsLSAlignMethod(m_LiveStackingUI.AlignMethod->currentIndex());
+    Options::setFitsLSNumInMem(m_LiveStackingUI.NumInMem->value());
+    Options::setFitsLSDownscale(m_LiveStackingUI.LSDownscale->currentIndex());
+    Options::setFitsLSWeighting(m_LiveStackingUI.Weighting->currentIndex());
+    Options::setFitsLSRejection(m_LiveStackingUI.Rejection->currentIndex());
+    Options::setFitsLSLowSigma(m_LiveStackingUI.LowSigma->value());
+    Options::setFitsLSHighSigma(m_LiveStackingUI.HighSigma->value());
+    Options::setFitsLSWinsorCutoff(m_LiveStackingUI.WinsorCutoff->value());
+    Options::setFitsLSPostProc(m_LiveStackingUI.PostProcGroupBox->isChecked());
+    Options::setFitsLSDeconvAmt(m_LiveStackingUI.DeconvAmt->value());
+    Options::setFitsLSPSFSigma(m_LiveStackingUI.PSFSigma->value());
+    Options::setFitsLSDenoiseAmt(m_LiveStackingUI.DenoiseAmt->value());
+    Options::setFitsLSSharpenAmt(m_LiveStackingUI.SharpenAmt->value());
+    Options::setFitsLSSharpenKernal(m_LiveStackingUI.SharpenKernal->value());
+    Options::setFitsLSSharpenSigma(m_LiveStackingUI.SharpenSigma->value());
+    // Write the options to disk
+    Options::self()->save();
+    qCDebug(KSTARS_FITS) << "Live Stacker settings saved";
+}
+
+LiveStackData FITSTab::getAllSettings()
+{
+    LiveStackData data;
+    data.masterDark = m_LiveStackingUI.MasterDark->text();
+    data.masterFlat = m_LiveStackingUI.MasterFlat->text();
+    data.alignMaster = m_LiveStackingUI.AlignMaster->text();
+    data.alignMethod = static_cast<LiveStackAlignMethod>(m_LiveStackingUI.AlignMethod->currentIndex());
+    data.numInMem = m_LiveStackingUI.NumInMem->value();
+    data.downscale = static_cast<LiveStackDownscale>(m_LiveStackingUI.LSDownscale->currentIndex());
+    data.weighting = static_cast<LiveStackFrameWeighting>(m_LiveStackingUI.Weighting->currentIndex());
+    data.rejection = static_cast<LiveStackRejection>(m_LiveStackingUI.Rejection->currentIndex());
+    data.lowSigma = m_LiveStackingUI.LowSigma->value();
+    data.highSigma = m_LiveStackingUI.HighSigma->value();
+    data.windsorCutoff = m_LiveStackingUI.WinsorCutoff->value();
+    data.postProcessing = getPPSettings();
+    return data;
+}
+
+LiveStackPPData FITSTab::getPPSettings()
+{
+    LiveStackPPData data;
+    data.postProcess = m_LiveStackingUI.PostProcGroupBox->isChecked();
+    data.deconvAmt = m_LiveStackingUI.DeconvAmt->value();
+    data.PSFSigma = m_LiveStackingUI.PSFSigma->value();
+    data.denoiseAmt = m_LiveStackingUI.DenoiseAmt->value();
+    data.sharpenAmt = m_LiveStackingUI.SharpenAmt->value();
+    data.sharpenKernal = m_LiveStackingUI.SharpenKernal->value();
+    data.sharpenSigma = m_LiveStackingUI.SharpenSigma->value();
+    return data;
+}
+
+void FITSTab::redoPostProcessing()
+{
+#if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
+    if(m_View && m_View->imageData() && m_View->imageData()->stack())
+    {
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
+        viewer->restack(getUID());
+        m_View->redoPostProcessStack(getPPSettings());
+    }
+#endif // !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
+}
+
+void FITSTab::selectLiveStack()
+{
+    QStringList dirs;
+
+    QFileDialog dialog(KStars::Instance(), i18nc("@title:window", "Stack Directory"));
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setDirectory(m_CurrentStackDir);
+
+    if (dialog.exec())
+    {
+        dirs = dialog.selectedFiles();
+        m_LiveStackingUI.Stack->setText(dirs[0]);
+        m_CurrentStackDir = m_liveStackDir = dirs[0];
+
+        // Reset the align master if a new stack has been selected
+        QString alignMaster = m_LiveStackingUI.AlignMaster->text();
+        if (!alignMaster.isEmpty())
+        {
+            QFileInfo fileInfo(alignMaster);
+            QString alignMasterDir = fileInfo.absolutePath();
+            if (alignMasterDir != dirs[0])
+                m_LiveStackingUI.AlignMaster->setText("");
+        }
+    }
+}
+
+void FITSTab::selectLiveStackAlignSub()
+{
+    QString selectedFilter;
+    QString file = QFileDialog::getOpenFileName(this, i18nc("@title:window", "Select Alignment Sub"),
+                   m_liveStackDir, "FITS (*.fits *.fits.gz *.fit);;XISF (*.xisf)", &selectedFilter);
+    if (!file.isNull())
+    {
+        QUrl sequenceURL = QUrl::fromLocalFile(file);
+        m_LiveStackingUI.AlignMaster->setText(sequenceURL.toLocalFile());
+        QFileInfo fileInfo(file);
+        m_CurrentStackDir = fileInfo.absolutePath();
+    }
+}
+
+void FITSTab::selectLiveStackMasterDark()
+{
+    QString selectedFilter;
+    QString file = QFileDialog::getOpenFileName(this, i18nc("@title:window", "Select Master Dark"),
+                   m_CurrentStackDir, "FITS (*.fits *.fits.gz *.fit);;XISF (*.xisf)", &selectedFilter);
+    if (!file.isNull())
+    {
+        QUrl sequenceURL = QUrl::fromLocalFile(file);
+        m_LiveStackingUI.MasterDark->setText(sequenceURL.toLocalFile());
+        QFileInfo fileInfo(file);
+        m_CurrentStackDir = fileInfo.absolutePath();
+    }
+}
+
+void FITSTab::selectLiveStackMasterFlat()
+{
+    QString selectedFilter;
+    QString file = QFileDialog::getOpenFileName(this, i18nc("@title:window", "Select Master Flat"),
+                   m_CurrentStackDir, "FITS (*.fits *.fits.gz *.fit);;XISF (*.xisf)", &selectedFilter);
+    if (!file.isNull())
+    {
+        QUrl sequenceURL = QUrl::fromLocalFile(file);
+        m_LiveStackingUI.MasterFlat->setText(sequenceURL.toLocalFile());
+        QFileInfo fileInfo(file);
+        m_CurrentStackDir = fileInfo.absolutePath();
+    }
+}
+
 void FITSTab::applyTypeFilter()
 {
     if (!m_View)
@@ -1030,27 +1281,211 @@ void FITSTab::setAutoStretch()
 
 void FITSTab::extractImage()
 {
-    connect(m_PlateSolve.get(), &PlateSolve::extractorSuccess, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::extractorSuccess, this, [this]()
     {
         m_View->updateFrame();
         m_PlateSolve->solveImage(m_View->imageData());
     });
-    connect(m_PlateSolve.get(), &PlateSolve::extractorFailed, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::extractorFailed, this, [this]()
     {
-        disconnect(m_PlateSolve.get());
+        disconnect(m_PlateSolve.data());
     });
-    connect(m_PlateSolve.get(), &PlateSolve::solverFailed, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::solverFailed, this, [this]()
     {
-        disconnect(m_PlateSolve.get());
+        disconnect(m_PlateSolve.data());
     });
-    connect(m_PlateSolve.get(), &PlateSolve::solverSuccess, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::solverSuccess, this, [this]()
     {
         m_View->syncWCSState();
         if (m_View->areObjectsShown())
             // Requery Objects based on new plate solved solution
             m_View->imageData()->searchObjects();
-        disconnect(m_PlateSolve.get());
+        disconnect(m_PlateSolve.data());
     });
     m_PlateSolve->extractImage(m_View->imageData());
 }
 
+// Reload the live stack
+void FITSTab::liveStack()
+{
+    QString text = m_LiveStackingUI.StartB->text().remove('&');
+    if (text == TEXT_START.toString())
+    {
+        m_StackStarted = true;
+        m_StackCancelled = false;
+        if (m_LiveStackingUI.Stack->text() != m_liveStackDir)
+            setTabName(i18n("Watching %1", m_liveStackDir));
+        // Start the stack process
+        m_LiveStackingUI.StartB->setText(TEXT_STOP.toString());
+        m_LiveStackingUI.StartB->setEnabled(true);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
+
+        m_liveStackDir = m_LiveStackingUI.Stack->text();
+        m_CurrentStackDir = m_liveStackDir;
+        m_StackSubsTotal = 0;
+        m_StackSubsProcessed = 0;
+        m_StackSubsFailed = 0;
+        m_LiveStackingUI.SubsProcessed->setText("0 / 0 / 0");
+        m_LiveStackingUI.SubsSNR->setText("0 / 0 / 0");
+        m_LiveStackingUI.ImageSNR->setText("0");
+        viewer->restack(getUID());
+        m_View->loadStack(m_liveStackDir, getAllSettings());
+    }
+    else if (text == TEXT_STOP.toString())
+    {
+        m_LiveStackingUI.StartB->setText(TEXT_STOPPING.toString());
+        m_LiveStackingUI.StartB->setEnabled(false);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
+        m_View->cancelStack();
+    }
+}
+
+// Plate solve the sub. May require 2 runs; firstly to get stars (if needed) and then to actually plate solve
+// Also, we assume that once the first sub is solved subsequent subs can be solved on just the same index and HEALPix
+// This significantly speeds up plate solving but if that solve fails... we widen the criteria and try again
+// before completely giving up on the sub
+#if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
+void FITSTab::plateSolveSub(const double ra, const double dec, const double pixScale, const int index,
+                            const int healpix, const LiveStackFrameWeighting &weighting)
+{
+    connect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, this, [this, ra, dec, pixScale, index, healpix]
+            (double medianHFR, int numStars)
+    {
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        m_StackMedianHFR = medianHFR;
+        m_StackNumStars = numStars;
+        qCDebug(KSTARS_FITS) << "Star extraction complete, plate solving starting...";
+        m_PlateSolve->plateSolveSub(m_View->imageData(), ra, dec, pixScale, index, healpix, SSolver::SOLVE);
+    });
+    connect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, this, [this]()
+    {
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, nullptr, nullptr);
+        const bool timedOut = false;
+        const bool success = false;
+        m_View->imageData()->solverDone(timedOut, success, m_StackMedianHFR, m_StackNumStars);
+    });
+    connect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, this, [this, ra, dec, pixScale]()
+    {
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        if (m_StackExtendedPlateSolve)
+        {
+            // Failed to plate solve on extended criteria so just fail
+            disconnect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
+            disconnect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, nullptr, nullptr);
+            const bool timedOut = false;
+            const bool success = false;
+            m_View->imageData()->solverDone(timedOut, success, m_StackMedianHFR, m_StackNumStars);
+        }
+        else
+        {
+            // Failed to plate solve on tight criteria so have another go on widened criteria
+            m_StackExtendedPlateSolve = true;
+            qCDebug(KSTARS_FITS) << "Plate solving failed, extending criteria and retrying...";
+            m_PlateSolve->plateSolveSub(m_View->imageData(), ra, dec, pixScale, -1, -1, SSolver::SOLVE);
+        }
+    });
+    connect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, this, [this]()
+    {
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, nullptr, nullptr);
+        const bool timedOut = false;
+        const bool success = true;
+        m_View->imageData()->solverDone(timedOut, success, m_StackMedianHFR, m_StackNumStars);
+    });
+
+    SSolver::ProcessType solveType;
+
+    if (!m_StackExtracted && (weighting == LS_STACKING_HFR || weighting == LS_STACKING_NUM_STARS))
+    {
+        // We need star details for later calculations so firstly extract stars
+        solveType = (weighting == LS_STACKING_HFR) ? SSolver::EXTRACT_WITH_HFR : SSolver::EXTRACT;
+        m_StackExtracted = true;
+    }
+    else
+    {
+        // No star details required (or we just extracted them) so now plate solve
+        solveType = SSolver::SOLVE;
+        m_StackExtracted = false;
+    }
+    m_StackMedianHFR = -1.0;
+    m_StackNumStars = 0;
+    m_StackExtendedPlateSolve = (index == -1);
+    m_PlateSolve->plateSolveSub(m_View->imageData(), ra, dec, pixScale, index, healpix, solveType);
+}
+#endif // !KSTARS_LITE, HAVE_WCSLIB, HAVE_OPENCV
+
+void FITSTab::stackInProgress()
+{
+    m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
+    viewer->restack(getUID());
+}
+
+void FITSTab::alignMasterChosen(const QString &alignMaster)
+{
+    m_LiveStackingUI.AlignMaster->setText(alignMaster);
+}
+
+void FITSTab::stackUpdateStats(const bool ok, const int sub, const int total, const double meanSNR, const double minSNR,
+                               const double maxSNR)
+{
+    Q_UNUSED(sub);
+    m_StackSubsTotal = total;
+    (ok) ? m_StackSubsProcessed++ : m_StackSubsFailed++;
+    m_LiveStackingUI.SubsProcessed->setText(QString("%1 / %2 / %3").arg(m_StackSubsProcessed).arg(m_StackSubsFailed).arg(
+            m_StackSubsTotal));
+    m_LiveStackingUI.SubsSNR->setText(QString("%1 / %2 / %3").arg(meanSNR, 0, 'f', 2).arg(minSNR, 0, 'f', 2).arg(maxSNR, 0, 'f',
+                                      2));
+}
+
+QString FITSTab::getTabTitle() const
+{
+    QString title = (m_View && (m_View->getMode() == FITS_LIVESTACKING)) ? "Stack" : "Image";
+    if (!m_StackStarted && !m_TabName.isEmpty())
+        title = m_TabName;
+    else if (m_StackStarted && m_TabName.isEmpty())
+    {
+        // This won't happen as when m_StackStarted is set to true, it also sets m_TabName.
+        // See liveStack().
+        QString start = (m_StackCancelled) ? i18n("Stopped Watching (%1)", m_StackSubsProcessed) :
+                                             i18n("(%1) Watching", m_StackSubsProcessed);
+        title = i18n("%1 %2", start, m_liveStackDir);
+    }
+    else if (m_StackStarted && !m_TabName.isEmpty())
+    {
+        QString start = (m_StackCancelled) ? i18n("Stopped (%1)", m_StackSubsProcessed) :
+                                             i18n("(%1)", m_StackSubsProcessed);
+        title = i18n("%1 %2", start, m_TabName);
+    }
+    return title;
+}
+
+void FITSTab::updateStackSNR(const double SNR)
+{
+    m_LiveStackingUI.ImageSNR->setText(QString("%1").arg(SNR, 0, 'f', 2));
+}
+
+void FITSTab::resetStack(const bool cancelled)
+{
+    if (cancelled)
+    {
+        // Cancel request has been actioned
+        m_LiveStackingUI.StartB->setText(TEXT_START.toString());
+        m_LiveStackingUI.StartB->setEnabled(true);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(true);
+        m_StackCancelled = true;
+        viewer->stackCancelled(getUID());
+    }
+    else if (m_StackSubsTotal <= m_StackSubsProcessed + m_StackSubsFailed)
+    {
+        // If stacking is complete make action buttons active
+        m_LiveStackingUI.StartB->setEnabled(true);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(true);
+    }
+}

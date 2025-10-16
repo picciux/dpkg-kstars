@@ -43,7 +43,7 @@
 
 namespace EkosLive
 {
-Message::Message(Ekos::Manager *manager, QVector<QSharedPointer<NodeManager>> &nodeManagers):
+Message::Message(Ekos::Manager *manager, QVector<QSharedPointer<NodeManager >> &nodeManagers):
     m_Manager(manager), m_NodeManagers(nodeManagers), m_DSOManager(CatalogsDB::dso_db_path())
 {
     for (auto &nodeManager : m_NodeManagers)
@@ -149,7 +149,17 @@ void Message::onTextReceived(const QString &message)
         // If client is connected, make sure clock is ticking
         if (payload["state"].toBool(false))
         {
-            qCInfo(KSTARS_EKOS) << "EkosLive client is connected.";
+            qCInfo(KSTARS_EKOS) << "EkosLive client is connected:" << node->url().toDisplayString();
+
+            // Need to update client state in the matching node manager.
+            for (auto &nodeManager : m_NodeManagers)
+            {
+                if (nodeManager->message() == node)
+                {
+                    node->setClientState(true);
+                    nodeManager->media()->setClientState(true);
+                }
+            }
 
             // If the clock is PAUSED, run it now and sync time as well.
             if (KStarsData::Instance()->clock()->isActive() == false)
@@ -165,7 +175,17 @@ void Message::onTextReceived(const QString &message)
         // then we pause here as well to save power.
         else
         {
-            qCInfo(KSTARS_EKOS) << "EkosLive client is disconnected.";
+            qCInfo(KSTARS_EKOS) << "EkosLive client is disconnected:" << node->url().toDisplayString();
+
+            // Need to update client state in the matching node manager.
+            for (auto &nodeManager : m_NodeManagers)
+            {
+                if (nodeManager->message() == node)
+                {
+                    node->setClientState(false);
+                    nodeManager->media()->setClientState(false);
+                }
+            }
             // It was started with paused state, so let's pause IF Ekos is not running
             if (KStars::Instance()->isStartedWithClockRunning() == false && m_Manager->ekosStatus() == Ekos::CommunicationStatus::Idle)
             {
@@ -1338,7 +1358,19 @@ void Message::sendSchedulerJobList(QJsonArray jobsList)
 ///////////////////////////////////////////////////////////////////////////////////////////
 void Message::sendSchedulerStatus(const QJsonObject &status)
 {
+    if (isConnected() == false)
+        return;
+
     sendResponse(commands[NEW_SCHEDULER_STATE], status);
+}
+
+void Message::sendMosaicTiles(const QJsonObject &tiles)
+{
+    if (isConnected() == false)
+        return;
+
+    m_DebouncedSend.start();
+    m_DebouncedMap[commands[NEW_MOSAIC_TILES]] = tiles.toVariantMap();
 }
 
 
@@ -1764,7 +1796,7 @@ void Message::processAstronomyCommands(const QString &command, const QJsonObject
     {
         auto composite = KStarsData::Instance()->skyComposite();
         QStringList all;
-        QVector<QPair<QString, const SkyObject *>> allObjects;
+        QVector<QPair<QString, const SkyObject * >> allObjects;
         CatalogsDB::CatalogObjectList dsoObjects;
 
         allObjects.append(composite->objectLists(SkyObject::STAR));
@@ -1855,32 +1887,32 @@ void Message::processAstronomyCommands(const QString &command, const QJsonObject
             // Add 1 day
             end = end.addDays(1);
 
-        QVector<QPair<QString, const SkyObject *>> allObjects;
+        QVector<QPair<QString, const SkyObject * >> allObjects;
         CatalogsDB::CatalogObjectList dsoObjects;
         bool isDSO = false;
 
         switch (objectType)
         {
-            // Stars
+                // Stars
             case SkyObject::STAR:
             case SkyObject::CATALOG_STAR:
                 allObjects.append(data->skyComposite()->objectLists(SkyObject::STAR));
                 allObjects.append(data->skyComposite()->objectLists(SkyObject::CATALOG_STAR));
                 break;
-            // Planets & Moon
+                // Planets & Moon
             case SkyObject::PLANET:
             case SkyObject::MOON:
                 allObjects.append(data->skyComposite()->objectLists(SkyObject::PLANET));
                 allObjects.append(data->skyComposite()->objectLists(SkyObject::MOON));
                 break;
-            // Comets & Asteroids
+                // Comets & Asteroids
             case SkyObject::COMET:
                 allObjects.append(data->skyComposite()->objectLists(SkyObject::COMET));
                 break;
             case SkyObject::ASTEROID:
                 allObjects.append(data->skyComposite()->objectLists(SkyObject::ASTEROID));
                 break;
-            // Clusters
+                // Clusters
             case SkyObject::OPEN_CLUSTER:
                 dsoObjects.splice(dsoObjects.end(), m_DSOManager.get_objects(SkyObject::OPEN_CLUSTER, objectMaxMagnitude));
                 isDSO = true;
@@ -1889,7 +1921,7 @@ void Message::processAstronomyCommands(const QString &command, const QJsonObject
                 dsoObjects.splice(dsoObjects.end(), m_DSOManager.get_objects(SkyObject::GLOBULAR_CLUSTER, objectMaxMagnitude));
                 isDSO = true;
                 break;
-            // Nebuale
+                // Nebuale
             case SkyObject::GASEOUS_NEBULA:
                 dsoObjects.splice(dsoObjects.end(), m_DSOManager.get_objects(SkyObject::GASEOUS_NEBULA, objectMaxMagnitude));
                 isDSO = true;
@@ -1934,7 +1966,7 @@ void Message::processAstronomyCommands(const QString &command, const QJsonObject
             return a.second->mag() < b.second->mag();
         });
 
-        QMutableVectorIterator<QPair<QString, const SkyObject *>> objectIterator(allObjects);
+        QMutableVectorIterator<QPair<QString, const SkyObject * >> objectIterator(allObjects);
 
         // Filter direction, if specified.
         if (objectDirection != All)
@@ -2212,11 +2244,9 @@ void Message::processAstronomyCommands(const QString &command, const QJsonObject
         auto *geo = KStarsData::Instance()->geo();
         // UT
         QDateTime midnight = QDateTime(data->lt().date(), QTime());
-        KStarsDateTime ut  = geo->LTtoUT(KStarsDateTime(midnight));
+        KStarsDateTime ut = geo->LTtoUT(KStarsDateTime(midnight));
 
-        int DayOffset = 0;
-        if (data->lt().time().hour() > 12)
-            DayOffset = 1;
+        int daysToProcess = payload["days"].toInt(0);
 
         for (auto &oneName : objectNames)
         {
@@ -2224,58 +2254,24 @@ void Message::processAstronomyCommands(const QString &command, const QJsonObject
             SkyObject *oneObject = data->skyComposite()->findByName(name, exact);
             if (oneObject)
             {
-                QJsonObject info;
-                //Prepare time/position variables
-                //true = use rise time
-                QTime riseTime = oneObject->riseSetTime(ut, geo, true);
+                // Get today's data using the helper function
+                QJsonObject todayInfo = getRiseSetAltitudeDataForDay(oneObject, ut, geo, data->lt().date());
+                todayInfo["name"] = exact ? name : oneObject->name();
 
-                //If transit time is before rise time, use transit time for tomorrow
-                QTime transitTime = oneObject->transitTime(ut, geo);
-                if (transitTime < riseTime)
-                    transitTime   = oneObject->transitTime(ut.addDays(1), geo);
-
-                //If set time is before rise time, use set time for tomorrow
-                //false = use set time
-                QTime setTime = oneObject->riseSetTime(ut, geo, false);
-                //false = use set time
-                if (setTime < riseTime)
-                    setTime  = oneObject->riseSetTime(ut.addDays(1), geo, false);
-
-                info["name"] = exact ? name : oneObject->name();
-                if (riseTime.isValid())
+                QJsonArray futureDaysArray;
+                for (int i = 1; i <= daysToProcess; ++i)
                 {
-                    info["rise"] = QString::asprintf("%02d:%02d", riseTime.hour(), riseTime.minute());
-                    info["set"] = QString::asprintf("%02d:%02d", setTime.hour(), setTime.minute());
-                }
-                else
-                {
-                    if (oneObject->alt().Degrees() > 0.0)
-                    {
-                        info["rise"] = "Circumpolar";
-                        info["set"] = "Circumpolar";
-                    }
-                    else
-                    {
-                        info["rise"] = "Never rises";
-                        info["set"] = "Never rises";
-                    }
+                    KStarsDateTime futureUt = ut.addDays(i);
+                    QDate futureDate = data->lt().date().addDays(i);
+                    futureDaysArray.append(getRiseSetAltitudeDataForDay(oneObject, futureUt, geo, futureDate));
                 }
 
-                info["transit"] = QString::asprintf("%02d:%02d", transitTime.hour(), transitTime.minute());
-
-                QJsonArray altitudes;
-                for (double h = -12.0; h <= 12.0; h += 0.5)
+                if (!futureDaysArray.isEmpty())
                 {
-                    double hour = h + (24.0 * DayOffset);
-                    KStarsDateTime offset = ut.addSecs(hour * 3600.0);
-                    CachingDms LST = geo->GSTtoLST(offset.gst());
-                    oneObject->EquatorialToHorizontal(&LST, geo->lat());
-                    altitudes.append(oneObject->alt().Degrees());
+                    todayInfo["days"] = futureDaysArray;
                 }
 
-                info["altitudes"] = altitudes;
-
-                objectsArray.append(info);
+                objectsArray.append(todayInfo);
             }
         }
 
@@ -2385,6 +2381,69 @@ KStarsDateTime Message::getNextDawn()
 ///////////////////////////////////////////////////////////////////////////////////////////
 ///
 ///////////////////////////////////////////////////////////////////////////////////////////
+QJsonObject Message::getRiseSetAltitudeDataForDay(SkyObject *oneObject, const KStarsDateTime &ut, GeoLocation *geo,
+        const QDate &date)
+{
+    QJsonObject info;
+    // Prepare time/position variables
+    // true = use rise time
+    QTime riseTime = oneObject->riseSetTime(ut, geo, true);
+
+    // If transit time is before rise time, use transit time for tomorrow
+    QTime transitTime = oneObject->transitTime(ut, geo);
+    if (transitTime < riseTime)
+        transitTime = oneObject->transitTime(ut.addDays(1), geo);
+
+    // If set time is before rise time, use set time for tomorrow
+    // false = use set time
+    QTime setTime = oneObject->riseSetTime(ut, geo, false);
+    // false = use set time
+    if (setTime < riseTime)
+        setTime = oneObject->riseSetTime(ut.addDays(1), geo, false);
+
+    info["date"] = date.toString("yyyy-MM-dd");
+    if (riseTime.isValid())
+    {
+        info["rise"] = QString::asprintf("%02d:%02d", riseTime.hour(), riseTime.minute());
+        info["set"] = QString::asprintf("%02d:%02d", setTime.hour(), setTime.minute());
+    }
+    else
+    {
+        if (oneObject->alt().Degrees() > 0.0)
+        {
+            info["rise"] = "Circumpolar";
+            info["set"] = "Circumpolar";
+        }
+        else
+        {
+            info["rise"] = "Never rises";
+            info["set"] = "Never rises";
+        }
+    }
+
+    info["transit"] = QString::asprintf("%02d:%02d", transitTime.hour(), transitTime.minute());
+
+    QJsonArray altitudes;
+    int DayOffset = 0;
+    if (ut.time().hour() > 12)
+        DayOffset = 1;
+
+    for (double h = -12.0; h <= 12.0; h += 0.5)
+    {
+        double hour = h + (24.0 * DayOffset);
+        KStarsDateTime offset = ut.addSecs(hour * 3600.0);
+        CachingDms LST = geo->GSTtoLST(offset.gst());
+        oneObject->EquatorialToHorizontal(&LST, geo->lat());
+        altitudes.append(oneObject->alt().Degrees());
+    }
+
+    info["altitudes"] = altitudes;
+    return info;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////////////
 void Message::requestDSLRInfo(const QString &cameraName)
 {
     sendResponse(commands[DSLR_GET_INFO], cameraName);
@@ -2447,6 +2506,17 @@ void Message::sendResponse(const QString &command, bool payload)
     for (auto &nodeManager : m_NodeManagers)
     {
         nodeManager->message()->sendResponse(command, payload);
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+///
+///////////////////////////////////////////////////////////////////////////////////////////
+void Message::sendEvent(const QString &command, const QJsonObject &payload)
+{
+    for (auto &nodeManager : m_NodeManagers)
+    {
+        nodeManager->message()->sendEvent(command, payload);
     }
 }
 
@@ -2625,7 +2695,7 @@ void Message::sendEvent(const QString &message, KSNotification::EventSource sour
         {"uuid", QUuid::createUuid().toString()}
     };
 
-    sendResponse(commands[NEW_NOTIFICATION], newEvent);
+    sendEvent(commands[NEW_NOTIFICATION], newEvent);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
@@ -2745,7 +2815,7 @@ void Message::setPendingPropertiesEnabled(bool enabled)
 void Message::sendPendingProperties()
 {
     // Group properties by device to minimize device lookups
-    QMap<QString, QSet<QString>> deviceProperties;
+    QMap<QString, QSet<QString >> deviceProperties;
 
     // First pass - group by device
     for (const auto &pending : m_PendingProperties)
@@ -2841,7 +2911,7 @@ void Message::sendModuleState(const QString &name)
 ///////////////////////////////////////////////////////////////////////////////////////////
 ///
 ///////////////////////////////////////////////////////////////////////////////////////////
-QObject *Message::findObject(const QString &name)
+QObject * Message::findObject(const QString &name)
 {
     QObject *object {nullptr};
     // Check for manager itself
@@ -2867,7 +2937,7 @@ QObject *Message::findObject(const QString &name)
     }
 
     // Finally KStars
-    // N.B. This does not include indepdent objects with their parent set to null (e.g. FITSViewer)
+    // N.B. This does not include independent objects with their parent set to null (e.g. FITSViewer)
     object = KStars::Instance()->findChild<QObject *>(name);
     return object;
 }
@@ -2875,8 +2945,8 @@ QObject *Message::findObject(const QString &name)
 ///////////////////////////////////////////////////////////////////////////////////////////
 ///
 ///////////////////////////////////////////////////////////////////////////////////////////
-#if QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
-bool Message::parseArgument(QVariant::Type type, const QVariant &arg, QMetaMethodArgument &genericArg, SimpleTypes &types)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+bool Message::parseArgument(QMetaType::Type type, const QVariant &arg, QMetaMethodArgument &genericArg, SimpleTypes &types)
 #else
 bool Message::parseArgument(QVariant::Type type, const QVariant &arg, QGenericArgument &genericArg, SimpleTypes &types)
 #endif
@@ -2885,38 +2955,82 @@ bool Message::parseArgument(QVariant::Type type, const QVariant &arg, QGenericAr
 
     switch (type)
     {
-        case QVariant::Type::Int:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::Int:
+#else
+        case QVariant::Int:
+#endif
             types.number_integer = arg.toInt();
             genericArg = Q_ARG(int, types.number_integer);
             return true;
-        case QVariant::Type::UInt:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::UInt:
+#else
+        case QVariant::UInt:
+#endif
             types.number_unsigned_integer = arg.toUInt();
             genericArg = Q_ARG(uint, types.number_unsigned_integer);
             return true;
-        case QVariant::Type::LongLong:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::LongLong:
+#else
+        case QVariant::LongLong:
+#endif
             types.number_integer = arg.toLongLong();
             genericArg = Q_ARG(int, types.number_integer);
             return true;
-        case QVariant::Type::ULongLong:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::ULongLong:
+#else
+        case QVariant::ULongLong:
+#endif
             types.number_unsigned_integer = arg.toULongLong();
             genericArg = Q_ARG(uint, types.number_unsigned_integer);
             return true;
-        case QVariant::Type::Double:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::Double:
+#else
+        case QVariant::Double:
+#endif
             types.number_double = arg.toDouble();
             genericArg = Q_ARG(double, types.number_double);
             return true;
-        case QVariant::Type::Bool:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::Bool:
+#else
+        case QVariant::Bool:
+#endif
             types.boolean = arg.toBool();
             genericArg = Q_ARG(bool, types.boolean);
             return true;
-        case QVariant::Type::String:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::QString:
+#else
+        case QVariant::String:
+#endif
             types.text = arg.toString();
             genericArg = Q_ARG(QString, types.text);
             return true;
-        case QVariant::Type::Url:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::QUrl:
+#else
+        case QVariant::Url:
+#endif
             types.url = arg.toUrl();
             genericArg = Q_ARG(QUrl, types.url);
             return true;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        case QMetaType::QSize:
+#else
+        case QVariant::Size:
+#endif
+        {
+            QJsonObject obj = arg.toJsonObject();
+            types.size = QSize(obj["width"].toInt(), obj["height"].toInt());
+        }
+        genericArg = Q_ARG(QSize, types.size);
+        return true;
+
         default:
             break;
     }
@@ -2954,8 +3068,13 @@ void Message::invokeMethod(QObject *context, const QJsonObject &payload)
             SimpleTypes genericType;
             argsList.append(genericArgument);
             typesList.append(genericType);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            if (parseArgument(static_cast<QMetaType::Type>(argObject["type"].toInt()), argObject["value"].toVariant(), argsList.back(),
+                              typesList.last()) == false)
+#else
             if (parseArgument(static_cast<QVariant::Type>(argObject["type"].toInt()), argObject["value"].toVariant(), argsList.back(),
                               typesList.last()) == false)
+#endif
             {
                 argsList.pop_back();
                 typesList.pop_back();

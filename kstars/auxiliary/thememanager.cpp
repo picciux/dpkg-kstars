@@ -129,19 +129,17 @@ void Manager::slotChangePalette()
 
     QString theme(currentThemeName());
 
-    /*if (theme == defaultThemeName() || theme.isEmpty())
+    // Do not set icon theme inside a flatpak
+    if (!KSUtils::isFlatpak())
     {
-        theme = currentDesktopdefaultTheme();
-    }*/
+        IconTheme themeIconType = BREEZE_DARK_THEME;
 
-    //QString themeIconName("breeze-dark");
-    IconTheme themeIconType = BREEZE_DARK_THEME;
+        if (theme == "Macintosh" || theme == "White Balance" || theme == "High Key" || (theme == "Default"
+                && currentDesktopdefaultTheme().contains("Dark") == false))
+            themeIconType = BREEZE_THEME;
 
-    if (theme == "Macintosh" || theme == "White Balance" || theme == "High Key" || (theme == "Default"
-            && currentDesktopdefaultTheme().contains("Dark") == false))
-        themeIconType = BREEZE_THEME;
-
-    setIconTheme(themeIconType);
+        setIconTheme(themeIconType);
+    }
 
     QString filename        = d->themeMap.value(theme);
     KSharedConfigPtr config = KSharedConfig::openConfig(filename);

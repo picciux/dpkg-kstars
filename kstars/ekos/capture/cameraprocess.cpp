@@ -32,6 +32,9 @@
 #include "ksnotification.h"
 #include <ekos_capture_debug.h>
 
+#include <QJsonDocument>
+#include <QJsonObject>
+
 #ifdef HAVE_STELLARSOLVER
 #include "ekos/auxiliary/stellarsolverprofileeditor.h"
 #endif
@@ -336,6 +339,7 @@ void CameraProcess::stopCapturing(CaptureState targetState)
 
     state()->getCaptureTimeout().stop();
     state()->getCaptureDelayTimer().stop();
+    state()->getGuideSettleTimer().stop();
     if (activeJob() != nullptr)
     {
         if (activeJob()->getStatus() == JOB_BUSY)
@@ -1495,7 +1499,7 @@ void CameraProcess::captureImage()
         if (activeCamera()->getUploadMode() != ISD::Camera::UPLOAD_CLIENT)
             activeCamera()->setUploadMode(ISD::Camera::UPLOAD_CLIENT);
     }
-    // If batch mode, ensure upload mode mathces the active job target.
+    // If batch mode, ensure upload mode matches the active job target.
     else
     {
         if (activeCamera()->getUploadMode() != activeJob()->getUploadMode())
@@ -1863,7 +1867,9 @@ IPState CameraProcess::runCaptureScript(ScriptTypes scriptType, bool precond)
         if (captureScript.isEmpty() == false && precond)
         {
             state()->setCaptureScriptType(scriptType);
-            m_CaptureScript.start(captureScript, generateScriptArguments());
+            m_CaptureScript.start(captureScript);
+            m_CaptureScript.write(generateScriptInput());
+            m_CaptureScript.closeWriteChannel();
             //m_CaptureScript.start("/bin/bash", QStringList() << captureScript);
             emit newLog(i18n("Executing capture script %1", captureScript));
             return IPS_BUSY;
@@ -2332,8 +2338,8 @@ double CameraProcess::calculateFlatExpTime(double currentADU)
     double targetADU    = activeJob()->getCoreProperty(SequenceJob::SJ_TargetADU).toDouble();
     std::vector<double> coeff;
 
-    // limit number of points to two so it can calibrate in intesity changing enviroment like shoting flats
-    // at dawn/sunrise sky
+    // limit number of points to two so it can calibrate in intensely changing environment like
+    // shooting flats at dawn/sunrise sky
     if(activeJob()->getCoreProperty(SequenceJob::SJ_SkyFlat).toBool() && ExpRaw.size() > 2)
     {
         int remove = ExpRaw.size() - 2;
@@ -2499,7 +2505,7 @@ void CameraProcess::updateFITSViewer(const QSharedPointer<FITSData> data, const 
                     {
                         emit newView(tabs[tabIndex]->getView());
                         tabs[tabIndex]->disconnect(this);
-                        connect(tabs[tabIndex].get(), &FITSTab::updated, this, [this]
+                        connect(tabs[tabIndex], &FITSTab::updated, this, [this]
                         {
                             auto tab = qobject_cast<FITSTab *>(sender());
                             emit newView(tab->getView());
@@ -2820,10 +2826,116 @@ void CameraProcess::llsq(QVector<double> x, QVector<double> y, double &a, double
 
 }
 
-QStringList CameraProcess::generateScriptArguments() const
+QByteArray CameraProcess::generateScriptInput()
 {
-    // TODO based on user feedback on what paramters are most useful to pass
-    return QStringList();
+    QJsonObject root;
+    ScriptTypes scriptType = state()->captureScriptType();
+
+    // Add script type as a string for easier parsing in scripts
+    switch (scriptType)
+    {
+        case SCRIPT_PRE_CAPTURE:
+            root["script_type"] = "PRE_CAPTURE";
+            break;
+        case SCRIPT_POST_CAPTURE:
+            root["script_type"] = "POST_CAPTURE";
+            break;
+        case SCRIPT_PRE_JOB:
+            root["script_type"] = "PRE_JOB";
+            break;
+        case SCRIPT_POST_JOB:
+            root["script_type"] = "POST_JOB";
+            break;
+        default:
+            root["script_type"] = "UNKNOWN";
+            break;
+    }
+
+    // Add general job details if a job is active
+    if (activeJob())
+    {
+        QJsonObject jobDetails;
+        jobDetails["filter"]      = activeJob()->getCoreProperty(SequenceJob::SJ_Filter).toString();
+        jobDetails["exposure"]    = activeJob()->getCoreProperty(SequenceJob::SJ_Exposure).toDouble();
+        QString frameTypeStr;
+        switch (activeJob()->getFrameType())
+        {
+            case FRAME_LIGHT:
+                frameTypeStr = "Light";
+                break;
+            case FRAME_DARK:
+                frameTypeStr = "Dark";
+                break;
+            case FRAME_BIAS:
+                frameTypeStr = "Bias";
+                break;
+            case FRAME_FLAT:
+                frameTypeStr = "Flat";
+                break;
+            case FRAME_VIDEO:
+                frameTypeStr = "Video";
+                break;
+            case FRAME_NONE:
+            default:
+                frameTypeStr = "None";
+                break;
+        }
+        jobDetails["type"]        = frameTypeStr;
+        jobDetails["binning_x"]   = activeJob()->getCoreProperty(SequenceJob::SJ_Binning).toPoint().x();
+        jobDetails["binning_y"]   = activeJob()->getCoreProperty(SequenceJob::SJ_Binning).toPoint().y();
+        jobDetails["target_name"] = activeJob()->getCoreProperty(SequenceJob::SJ_TargetName).toString();
+        root["job"] = jobDetails;
+    }
+
+    if (scriptType == SCRIPT_POST_CAPTURE)
+    {
+        // Add FITS info
+        if (state()->imageData())
+        {
+            QJsonObject fitsInfo;
+            fitsInfo["filename"] = state()->imageData()->filename();
+            QJsonObject headers;
+            for (const auto &record : state()->imageData()->getRecords())
+            {
+                headers[record.key] = QJsonValue::fromVariant(record.value);
+            }
+            fitsInfo["headers"] = headers;
+            root["fits"] = fitsInfo;
+        }
+
+        // Add job progress
+        if (activeJob())
+        {
+            QJsonObject jobProgress;
+            jobProgress["completed"] = activeJob()->getCompleted();
+            jobProgress["total"]     = activeJob()->getCoreProperty(SequenceJob::SJ_Count).toInt();
+            root["progress"] = jobProgress;
+        }
+    }
+    else if (scriptType == SCRIPT_POST_JOB)
+    {
+        // Add sequence progress
+        int completedJobs = 0;
+        for (const auto &job : state()->allJobs())
+        {
+            if (job->getStatus() == JOB_DONE)
+            {
+                completedJobs++;
+            }
+        }
+        // The current job has just finished but is not yet marked as DONE.
+        if (activeJob())
+        {
+            completedJobs++;
+        }
+
+        QJsonObject sequenceProgress;
+        sequenceProgress["completed"] = completedJobs;
+        sequenceProgress["total"]     = state()->allJobs().count();
+        root["progress"] = sequenceProgress;
+    }
+
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
 bool CameraProcess::hasCoolerControl()

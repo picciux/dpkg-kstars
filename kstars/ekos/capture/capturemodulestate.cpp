@@ -209,7 +209,6 @@ void CaptureModuleState::setActiveAction(int cameraID, CaptureWorkflowActionType
 
 void CaptureModuleState::handleActionRequest(int cameraID, CaptureWorkflowActionType action)
 {
-    qCDebug(KSTARS_EKOS_CAPTURE) << "Handling" << action << "request for camera" << cameraID;
     switch(action)
     {
         case CAPTURE_ACTION_DITHER_REQUEST:
@@ -280,7 +279,8 @@ void CaptureModuleState::checkNextActionExecution(int cameraID)
             if (cam->state()->isCaptureStopped())
                 cam->start();
             else if (cam->state()->isCapturePausing())
-                cam->toggleSequence();
+                // restart after guiding settling delay (necessary in multi camera setups for followers)
+                cam->toggleSequence(Options::guidingSettle() * 1000);
             break;
         case CAPTURE_ACTION_PAUSE:
             setActiveAction(cameraID, CAPTURE_ACTION_PAUSE);

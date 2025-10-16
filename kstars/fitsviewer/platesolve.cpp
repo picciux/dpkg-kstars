@@ -13,10 +13,14 @@
 #include "fitsdata.h"
 #include "skymap.h"
 #include <fits_debug.h>
+#include "imageoverlaycomponent.h"
+#include "skymapcomposite.h"
+#include "kstars.h"
+#include "stretch.h"
 
-QPointer<Ekos::StellarSolverProfileEditor> PlateSolve::m_ProfileEditor;
-QPointer<KConfigDialog> PlateSolve::m_EditorDialog;
-QPointer<KPageWidgetItem> PlateSolve::m_ProfileEditorPage;
+QPointer<Ekos::StellarSolverProfileEditor> PlateSolve::m_ProfileEditor = nullptr;
+QPointer<KConfigDialog> PlateSolve::m_EditorDialog = nullptr;
+QPointer<KPageWidgetItem> PlateSolve::m_ProfileEditorPage = nullptr;
 
 namespace
 {
@@ -92,6 +96,8 @@ void PlateSolve::setup()
     });
     connect(SolveButton, &QPushButton::clicked, this, [this]()
     {
+        if (!m_overlayDisabled)
+            disableAuxButton();
         if (m_Solver.get() && m_Solver->isRunning())
         {
             SolveButton->setText(i18n("Aborting..."));
@@ -260,6 +266,54 @@ void PlateSolve::solveImage(const QSharedPointer<FITSData> &imageData)
     m_Solver->runSolver(imageData);
 }
 
+// Plate solve an image sub as part of Live Stacking
+// In this case we are not using the FitsTab Plate Solving UI except to use
+// the currently selected profile for solving.
+void PlateSolve::plateSolveSub(const QSharedPointer<FITSData> &imageData, const double ra, const double dec,
+                               const double pixScale, const int index, const int healpix,
+                               const SSolver::ProcessType solveType)
+{
+    m_imageData = imageData;
+    if (m_Solver.get() && m_Solver->isRunning())
+        m_Solver->abort();
+
+    auto parameters = getSSolverParametersList(static_cast<Ekos::ProfileGroup>(Options::fitsSolverModule())).at(
+                          kcfg_FitsSolverProfile->currentIndex());
+
+    double lowerPixScale, upperPixScale;
+    if (index == -1)
+    {
+        // First solve so use wider criteria...
+        parameters.search_radius = kcfg_FitsSolverRadius->value();
+        lowerPixScale = pixScale * 0.8;
+        upperPixScale = pixScale * 1.2;
+    }
+    else
+    {
+        // Tighten the search radius and pixscale...
+        parameters.search_radius = 1;
+        lowerPixScale = pixScale * 0.95;
+        upperPixScale = pixScale * 1.05;
+    }
+
+    // Limit the timeout in case of plate solving failure
+    parameters.solverTimeLimit = std::min(parameters.solverTimeLimit, 20);
+
+    m_Solver.reset(new SolverUtils(parameters, parameters.solverTimeLimit, solveType), &QObject::deleteLater);
+
+    if (solveType == SSolver::EXTRACT || solveType == SSolver::EXTRACT_WITH_HFR)
+        // We need star details for later calculations so firstly extract stars
+        connect(m_Solver.get(), &SolverUtils::done, this, &PlateSolve::subExtractorDone, Qt::UniqueConnection);
+    else
+        // No star details required (or we just extracted them) so now plate solve
+        connect(m_Solver.get(), &SolverUtils::done, this, &PlateSolve::subSolverDone, Qt::UniqueConnection);
+
+    m_Solver->useScale(true, lowerPixScale, upperPixScale);
+    m_Solver->usePosition(true, ra, dec);
+    m_Solver->setHealpix(index, healpix);
+    m_Solver->runSolver(imageData, true);
+}
+
 void PlateSolve::extractorDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds)
 {
     Q_UNUSED(solution);
@@ -323,6 +377,44 @@ void PlateSolve::extractorDone(bool timedOut, bool success, const FITSImage::Sol
     }
 }
 
+void PlateSolve::subExtractorDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds)
+{
+    Q_UNUSED(solution);
+    disconnect(m_Solver.get(), &SolverUtils::done, this, &PlateSolve::subExtractorDone);
+
+    if (timedOut)
+    {
+        qCDebug(KSTARS_FITS) << QString("Extractor timed out: %1s").arg(elapsedSeconds, 0, 'f', 1);
+        emit subExtractorFailed();
+        return;
+    }
+    else if (!success)
+    {
+        qCDebug(KSTARS_FITS) << QString("Extractor failed: %1s").arg(elapsedSeconds, 0, 'f', 1);
+        emit subExtractorFailed();
+        return;
+    }
+
+    const QList<FITSImage::Star> &starList = m_Solver->getStarList();
+
+    // Get the median HFR
+    double medianHFR = 0.0;
+    if (starList.size() > 0)
+    {
+        std::vector<FITSImage::Star> stars(starList.constBegin(), starList.constEnd());
+        // Use nth_element to get the median HFR
+        std::nth_element(stars.begin(), stars.begin() + stars.size() / 2, stars.end(),
+                         [](const FITSImage::Star & a, const FITSImage::Star & b)
+        {
+            return a.HFR < b.HFR;
+        });
+        FITSImage::Star medianStar = stars[stars.size() / 2];
+        medianHFR = medianStar.HFR;
+    }
+    // Set the stars in the FITSData object so the user can view them.
+    emit subExtractorSuccess(medianHFR, starList.size());
+}
+
 void PlateSolve::solverDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds)
 {
     m_Solution = FITSImage::Solution();
@@ -380,8 +472,135 @@ void PlateSolve::solverDone(bool timedOut, bool success, const FITSImage::Soluti
         FitsSolverEstDec->show(dms(solution.dec));
 
         Solution2->setText(result);
+
+        if (!m_overlayDisabled)
+        {
+            enableAuxButton("Overlay on SkyMap",
+                            "Temporarily overlay the image on the SkyMap. The overlay is not permanent, but just lasts for this KStars instance.");
+            connect(this, &PlateSolve::auxClicked, this, &PlateSolve::overlayImage, Qt::UniqueConnection);
+        }
         emit solverSuccess();
     }
+}
+
+void PlateSolve::subSolverDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds)
+{
+    disconnect(m_Solver.get(), &SolverUtils::done, this, &PlateSolve::subSolverDone);
+
+    if (m_Solver->isRunning())
+    {
+        qCDebug(KSTARS_FITS) << "subSolverDone called, but it is still running. Waiting to finish...";
+        QTimer::singleShot(1000, this, [ &, timedOut, success, solution, elapsedSeconds]()
+        {
+            subSolverDone(timedOut, success, solution, elapsedSeconds);
+        });
+        return;
+    }
+
+    if (timedOut)
+    {
+        qCDebug(KSTARS_FITS) << QString("subSolver timed out: %1s").arg(elapsedSeconds, 0, 'f', 1);
+        emit subSolverFailed();
+        return;
+    }
+    if (!success)
+    {
+        qCDebug(KSTARS_FITS) << QString("subSolver failed: %1s").arg(elapsedSeconds, 0, 'f', 1);
+        emit subSolverFailed();
+        return;
+    }
+
+#if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
+    int indexUsed = -1, healpixUsed = -1;
+    m_Solver->getSolutionHealpix(&indexUsed, &healpixUsed);
+    m_imageData->setStackSubSolution(solution.ra, solution.dec, solution.pixscale, indexUsed, healpixUsed);
+    const bool eastToTheRight = solution.parity == FITSImage::POSITIVE ? false : true;
+    m_imageData->injectStackWCS(solution.orientation, solution.ra, solution.dec, solution.pixscale, eastToTheRight);
+    m_imageData->stackLoadWCS();
+    emit subSolverSuccess();
+#endif // !KSTARS_LITE, HAVE_WCSLIB, HAVE_OPENCV
+}
+
+void PlateSolve::centerOnSkymap()
+{
+    m_SolvedObject.reset(new SkyObject(SkyObject::TYPE_UNKNOWN, dms(m_Solution.ra), dms(m_Solution.dec)));
+
+    // Set up the Alt/Az coordinates that SkyMap needs.
+    auto geo = KStarsData::Instance()->geo();
+    KStarsDateTime time = KStarsData::Instance()->clock()->utc();
+    dms lst = geo->GSTtoLST(time.gst());
+    m_SolvedObject->EquatorialToHorizontal(&lst, geo->lat());
+
+    // Doing this to avoid the pop-up warning that an object is below the ground.
+    bool keepGround = Options::showGround();
+    bool keepAnimatedSlew = Options::useAnimatedSlewing();
+    Options::setShowGround(false);
+    Options::setUseAnimatedSlewing(false);
+
+    SkyMap::Instance()->setClickedObject(m_SolvedObject.get());
+    SkyMap::Instance()->setFocusObject(m_SolvedObject.get());
+    SkyMap::Instance()->setClickedPoint(m_SolvedObject.get());
+    SkyMap::Instance()->slotCenter();
+
+    Options::setShowGround(keepGround);
+    Options::setUseAnimatedSlewing(keepAnimatedSlew);
+}
+
+void PlateSolve::overlayImage()
+{
+    if (m_imageData.isNull()) return;
+    const FITSImage::Solution &solution = m_Solution;
+    ImageOverlay overlay;
+    overlay.m_Orientation = solution.orientation;
+    overlay.m_RA = solution.ra;
+    overlay.m_DEC = solution.dec;
+    overlay.m_ArcsecPerPixel = solution.pixscale;
+    overlay.m_EastToTheRight = solution.parity;
+    overlay.m_Status = ImageOverlay::AVAILABLE;
+
+    QSharedPointer<QImage> tempImage;
+    if (kcfg_FitsSolverLinear->isChecked() )
+    {
+        Stretch stretch(static_cast<int>(m_imageData->width()),
+                        static_cast<int>(m_imageData->height()),
+                        m_imageData->channels(), m_imageData->dataType());
+
+        StretchParams tempParams = stretch.computeParams(m_imageData->getImageBuffer(), 1);
+        stretch.setParams(tempParams);
+        if (m_imageData->channels() == 1)
+        {
+            tempImage.reset(new QImage(m_imageData->width(), m_imageData->height(), QImage::Format_Indexed8));
+            tempImage->setColorCount(256);
+            for (int i = 0; i < 256; i++)
+                tempImage->setColor(i, qRgb(i, i, i));
+        }
+        else
+        {
+            tempImage.reset(new QImage(m_imageData->width(), m_imageData->height(), QImage::Format_RGB32));
+        }
+        stretch.run(m_imageData->getImageBuffer(), tempImage.get(), 1);
+    }
+    else
+    {
+        tempImage.reset(new QImage(m_imageData->filename()));
+    }
+
+    const bool mirror = !solution.parity;
+    const int scaleWidth = std::min((int) m_imageData->width(), Options::imageOverlayMaxDimension());
+    QImage *processedImg = new QImage;
+    if (mirror)
+        *processedImg = tempImage->mirrored(true, false).scaledToWidth(scaleWidth); // It's reflected horizontally.
+    else
+        *processedImg = tempImage->scaledToWidth(scaleWidth);
+    overlay.m_Img.reset(processedImg);
+    overlay.m_Width = processedImg->width();
+    overlay.m_Height = processedImg->height();
+    KStarsData::Instance()->skyComposite()->imageOverlay()->show();
+    overlay.m_ArcsecPerPixel = overlay.m_ArcsecPerPixel * m_imageData->width() / scaleWidth;
+    KStarsData::Instance()->skyComposite()->imageOverlay()->addTemporaryImageOverlay(overlay);
+    centerOnSkymap();
+    KStars::Instance()->activateWindow();
+    KStars::Instance()->raise();
 }
 
 // Each module can default to its own profile index. These two methods retrieves and saves

@@ -24,7 +24,7 @@ rotations between the images.
 addPoint(image) is called by the polar alignment UI after it takes and
 solves each of its three images. The solutions are store in SkyPoints (see below)
 and are processed so that the sky positions correspond to "what's in the sky
-now" and "at this geographic localtion".
+now" and "at this geographic location".
 
 Addpoint() samples the location of a particular pixel in its image.
 
@@ -37,7 +37,7 @@ it to match the Earth's real polar axes. Ekos has two techniques to do that. In 
 Ekos takes a series of "refresh images".  The user looks at the images and their
 associated analyses and adjusts the mount's altitude and azimuth knobs.
 
-In the first scheme, the user identifies a refrence star on the image. Ekos draws a triangle
+In the first scheme, the user identifies a reference star on the image. Ekos draws a triangle
 over the image, and user attempts to "move the star" along two sides of that triangle.
 
 In the 2nd scheme, the system plate-solves the refresh images, telling the user which direction
@@ -122,66 +122,113 @@ bool PolarAlign::addPoint(const QSharedPointer<FITSData> &image)
 namespace
 {
 
-// Returns the distance, in absolute-value degrees, of taking point "from",
-// rotating it around the Y axis by yAngle, then rotating around the Z axis
-// by zAngle and comparing that with "goal".
-double getResidual(const V3 &from, double yAngle, double zAngle, const V3 &goal)
+// Calculates the smallest rotation angle around the Y axis (modeling a turn of the mount's altitude knob)
+// that corresponds to a rotation from "from" to "goal". Note--the rotation won't reach "goal", it would still need
+// another rotation around the Z axis (modeling a turn of the mount's azimuth knob).
+// Returns the angle in radians.
+// Gemini generated something close to this with this prompt.
+//   I have a geometry problem I need a solution for (with c++ code):
+//   I have two points on a unit sphere (x1, y1, z1) and (x2, y2, z2).
+//   I want to rotate the sphere so that x1,y1,z1 moves to x2,y2,z2,
+//   but I can only make rotations first around the Y axis and then around the Z axis.
+//   I want to make the smallest rotations possible. First solve for the rotation around
+//   the Y axis, then the rotation around the Z axis.
+// This function is just y-axis rotation part.
+// Here's a quick explanation. The function finds an intermediate point (after rotating around Y-axis,
+// before rotating around Z-axis). That point, since it has a Y-axis rotation from the "from" point,
+// shares the from point's y value. Similarly, that point, since it will be rotated around the Z-axis
+// to become the goal point, shares the goal point's z value.
+// So the intermediate point is (x_int, from.y(), goal.z()).
+// Since the point is on the unit circle, x_int^2 + from.y()^2 +goal.z()^2 = 1.0
+// So below just solves for x_int by solving that equation,
+// which has 2 solutions, +sqrt(radicand)  and -sqrt(radicand).
+// Now that we know the values for the intermediate point, we can find the Y rotation by projecting on the X-Z plane,
+// and can find the Z rotation by projecting on the X-Y plane. See the comment in the "Steps 2 & 3" loop.
+double findSmallestThetaY(const V3 &from, const V3 &goal, bool *ok)
 {
-    V3 point1 = Rotations::rotateAroundY(from, yAngle);
-    V3 point2 = Rotations::rotateAroundZ(point1, zAngle);
-    return fabs(getAngle(point2, goal));
-}
+    *ok = false;
 
-// Finds the best rotations to change from pointing to 'from' to pointing to 'goal'.
-// It tries 'all' possible pairs of x and y rotations (sampled by increment).
-// Note that you can't simply find the best Z rotation, and the go from there to find the best Y.
-// The space is non-linear, and that would often lead to poor solutions.
-double getBestRotation(const V3 &from, const V3 &goal,
-                       double zStart, double yStart,
-                       double *bestAngleZ, double *bestAngleY,
-                       double range, double increment)
-{
-
-    *bestAngleZ = 0;
-    *bestAngleY = 0;
-    double minDist = 1e8;
-    range = fabs(range);
-    for (double thetaY = yStart - range; thetaY <= yStart + range; thetaY += increment)
+    double radicand = 1.0 - std::pow(from.y(), 2) - std::pow(goal.z(), 2);
+    if (radicand < -1e-9)   // Use a small tolerance for floating point errors
     {
-        for (double thetaZ = zStart - range; thetaZ <= zStart + range; thetaZ += increment)
-        {
-            double dist = getResidual(from, thetaY, thetaZ, goal);
-            if (dist < minDist)
-            {
-                minDist = dist;
-                *bestAngleY = thetaY;
-                *bestAngleZ = thetaZ;
-            }
-        }
+        qCInfo(KSTARS_EKOS_ALIGN) << QString("PAA refresh: No solution: |C| > D");
+        return 0;
     }
-    return minDist;
+
+    // Ensure radicand is not negative due to precision errors
+    radicand = std::max(0.0, radicand);
+
+    double x_intermediate_1 = std::sqrt(radicand);
+    double x_intermediate_2 = -std::sqrt(radicand);
+
+    std::vector<std::pair<double, double>> solutions;
+    std::vector<double> x_intermediates = {x_intermediate_1, x_intermediate_2};
+
+    // --- Steps 2 & 3: Calculate angles for both possible solutions ---
+    for (double x_int : x_intermediates)
+    {
+        Eigen::Vector3d p_intermediate(x_int, from.y(), goal.z());
+
+        // Calculate Z-axis rotation angle. See below comment.
+        double theta_z = std::atan2(goal.y(), goal.x()) - std::atan2(p_intermediate.y(), p_intermediate.x());
+
+        // Calculate Y-axis rotation angle. This expression is simply the angle of the projection of
+        // intermediate point onto the X-Z plane, minus the angle of the projection onto the X-Z plane
+        // of the "from" point.
+        double theta_y = std::atan2(p_intermediate.x(), p_intermediate.z()) - std::atan2(from.x(), from.z());
+
+        // Normalize angles to the range [-pi, pi] to ensure we find the smallest rotation
+        // Could do this with a simple loop
+        // (e.g. "while (theta_z < -M_PI) theta_z += 2*M_PI; and the "> M_PI" loop")
+        // but AI recommends the below.
+        theta_z = std::atan2(std::sin(theta_z), std::cos(theta_z));
+        theta_y = std::atan2(std::sin(theta_y), std::cos(theta_y));
+
+        solutions.push_back({theta_y, theta_z});
+    }
+
+    // --- Step 4: Choose the solution with the smallest total rotation ---
+    double cost1 = std::abs(solutions[0].first) + std::abs(solutions[0].second);
+    double cost2 = std::abs(solutions[1].first) + std::abs(solutions[1].second);
+
+    *ok = true;
+    if (cost1 <= cost2)
+    {
+        return solutions[0].first;
+    }
+    else
+    {
+        return solutions[1].first;
+    }
 }
 
-// Computes the rotations in Y (altitude) and Z (azimuth) that brings 'from' closest to 'goal'.
-// Returns the residual (error angle between where these rotations lead and "goal".
-double getRotationAngles(const V3 &from, const V3 &goal, double *zAngle, double *yAngle)
+V3 rotateAroundY(double theta_y, const V3 &vector)
 {
-    // All in degrees.
-    constexpr double pass1Resolution = 1.0 / 60.0;
-    constexpr double pass2Resolution = 5 / 3600.0;
-    constexpr double pass2Range = 4.0 / 60.0;
-
-    // Compute the rotation using a great circle. This somewhat constrains our search below.
-    const double rotationAngle = getAngle(from, goal); // degrees
-    const double pass1Range = std::max(3.0, std::min(10.0, 2.5 * fabs(rotationAngle)));
-
-    // Grid search across all y,z angle possibilities, sampling by 2 arc-minutes.
-    const double pass1Residual = getBestRotation(from, goal, 0, 0, zAngle, yAngle, pass1Range, pass1Resolution);
-    Q_UNUSED(pass1Residual);
-
-    // Refine the search around the best solution so far
-    return getBestRotation(from, goal, *zAngle, *yAngle, zAngle, yAngle, pass2Range, pass2Resolution);
+    double cos_theta = cos(theta_y);
+    double sin_theta = sin(theta_y);
+    return V3(cos_theta * vector.x() + sin_theta * vector.z(),
+              vector.y(),
+              -sin_theta * vector.x() + cos_theta * vector.z());
 }
+
+// This computes the exact rotation angles directly (Thanks AI!)
+// Yangle (returned in degrees) corresponds to a change in the mount's altitude control.
+// Zangle (returned in degrees) corresponds to a change in the mount's azimuth control.
+// A failure returns false.
+bool getRotationAngles2(const V3 &from, const V3 &goal, double * zAngle, double * yAngle)
+{
+    bool ok;
+    const double yAngleRadians = findSmallestThetaY(from, goal, &ok);
+    *yAngle = yAngleRadians * 180.0 / M_PI;
+    if (!ok)
+        return false;
+
+    V3 fromAfterY;
+    fromAfterY = rotateAroundY(yAngleRadians, from);
+    *zAngle = (atan2(goal.y(), goal.x()) - atan2(fromAfterY.y(), fromAfterY.x())) * 180.0 / M_PI;
+    return true;
+}
+
 }  // namespace
 
 // Compute the polar-alignment azimuth and altitude error by comparing the new image's coordinates
@@ -233,14 +280,13 @@ bool PolarAlign::processRefreshCoords(const SkyPoint &coords, const KStarsDateTi
     // (i.e. the rotation caused by the user adjusting the azimuth and altitude knobs).
     // We assume that this was a rotation around a level mount's y axis and z axis.
     double zAdjustment, yAdjustment;
-    double residual = getRotationAngles(point3, newPoint, &zAdjustment, &yAdjustment);
-    if (residual > 0.5)
+    if (!getRotationAngles2(point3, newPoint, &zAdjustment, &yAdjustment))
     {
-        qCInfo(KSTARS_EKOS_ALIGN) << QString("PAA refresh: failed to estimate rotation angle (residual %1'").arg(residual * 60);
+        qCInfo(KSTARS_EKOS_ALIGN) << QString("PAA refresh: getRotationAngles2 failed");
         return false;
     }
-    qCInfo(KSTARS_EKOS_ALIGN) << QString("PAA refresh: Estimated current adjustment: Az %1' Alt %2' residual %3a-s")
-                              .arg(zAdjustment * 60, 0, 'f', 1).arg(yAdjustment * 60, 0, 'f', 1).arg(residual * 3600, 0, 'f', 0);
+    qCInfo(KSTARS_EKOS_ALIGN) << QString("PAA refresh: Estimated current adjustment: Az %1' Alt %2'")
+                              .arg(zAdjustment * 60, 0, 'f', 1).arg(yAdjustment * 60, 0, 'f', 1);
 
     // Return the estimated adjustments (used by testing).
     if (altAdjustment != nullptr) *altAdjustment = yAdjustment;
@@ -433,7 +479,7 @@ void PolarAlign::setMaxPixelSearchRange(double degrees)
 // from the original call to findCorrectedPixel. This calls findCorrectedPixel several hundred times
 // but is not too costly (about .1s on a RPi4).  One could write a method that more directly estimates
 // the error given the current position, but it might not be applicable to our use-case as
-// we are constrained to move along paths detemined by a user adjusting an altitude knob and then
+// we are constrained to move along paths determined by a user adjusting an altitude knob and then
 // an azimuth adjustment. These corrections are likely not the most direct path to solve the axis error.
 bool PolarAlign::pixelError(const QSharedPointer<FITSData> &image, const QPointF &pixel, const QPointF &pixel2,
                             double *azError, double *altError)

@@ -78,7 +78,7 @@ private:
      * @param job currently active job
      * @param devicename name of the used camera device
      */
-    void updateJobProgress(CaptureProcessOverlay::FrameData data, const QString &devicename);
+    void updateJobProgress(CaptureHistory::FrameData data, const QString &devicename);
 
     /**
      * @brief enable / disable display widgets
@@ -90,11 +90,11 @@ private:
      */
     void reset();
 
-    // informations about the current frame
+    // information about the current frame
     void setFrameInfo(const QString frametype, const QString filter = "", const double exptime = -1, const int xBin = -1, const int yBin = -1, const double gain = -1);
 
     /**
-     * @brief showCurrentCameraInfo Display the capturing status informations for the selected camera device
+     * @brief showCurrentCameraInfo Display the capturing status information for the selected camera device
      */
     void showCurrentCameraInfo();
     /**
@@ -130,5 +130,5 @@ private:
     void refreshImageCounts(const QString &trainname);
 
     // cache frame data
-    QMap<QString, CaptureProcessOverlay::FrameData> m_currentFrame;
+    QMap<QString, CaptureHistory::FrameData> m_currentFrame;
 };

@@ -41,7 +41,7 @@ CameraState::CameraState(QObject *parent): QObject{parent}
     init();
 }
 
-QList<QSharedPointer<SequenceJob>> &CameraState::allJobs()
+QList<QSharedPointer<SequenceJob >> &CameraState::allJobs()
 {
     return m_sequenceQueue->allJobs();
 }
@@ -219,7 +219,7 @@ void CameraState::setGuideState(GuideState state)
             {
                 // N.B. Do NOT convert to i18np since guidingRate is DOUBLE value (e.g. 1.36) so we always use plural with that.
                 appendLogText(i18n("Dither complete. Resuming in %1 seconds...", Options::guidingSettle()));
-                QTimer::singleShot(Options::guidingSettle() * 1000, this, [this]()
+                getGuideSettleTimer().singleShot(Options::guidingSettle() * 1000, this, [this]()
                 {
                     setDitheringState(IPS_OK);
                 });
@@ -504,6 +504,9 @@ void CameraState::updateMeridianFlipStage(const MeridianFlipState::MFStage &stag
                                   KSNotification::Capture);
 
             getMeridianFlipState()->processFlipCompleted();
+
+            // Reset alignment retries here, after the flip is completed.
+            resetAlignmentRetries();
 
             // if the capturing has been paused before the flip, reset the state to paused, otherwise to idle
             setCaptureState(m_ContinueAction == CAPTURE_CONTINUE_ACTION_NONE ? CAPTURE_IDLE : CAPTURE_PAUSED);
@@ -890,8 +893,6 @@ bool CameraState::checkAlignmentAfterFlip()
     // if no meridian flip has completed, we do not touch guiding
     if (getMeridianFlipState()->getMeridianFlipStage() < MeridianFlipState::MF_COMPLETED)
     {
-        qCDebug(KSTARS_EKOS_CAPTURE) << "checkAlignmentAfterFlip too early, meridian flip stage =" <<
-                                     getMeridianFlipState()->getMeridianFlipStage();
         return false;
     }
     // If we do not need to align then we're done
@@ -906,7 +907,6 @@ bool CameraState::checkAlignmentAfterFlip()
     {
         appendLogText(i18n("Performing post flip re-alignment..."));
 
-        resetAlignmentRetries();
         setCaptureState(CAPTURE_ALIGNING);
 
         getMeridianFlipState()->updateMeridianFlipStage(MeridianFlipState::MF_ALIGNING);
@@ -1514,6 +1514,9 @@ void CameraState::setAlignState(AlignState value)
                     // Do not set back the stage to MF_COMPLETED here,
                     // as it causes repeated "Meridian flip completed" messages on alignment failures.
                     // The stage should remain MF_ALIGNING for the retry.
+
+                    // Reset capture state to allow re-entry into alignment
+                    setCaptureState(CAPTURE_PROGRESS);
                 }
             }
             break;
