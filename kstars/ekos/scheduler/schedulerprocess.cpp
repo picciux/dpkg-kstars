@@ -16,6 +16,8 @@
 #include "kstars.h"
 #include "kstarsdata.h"
 #include "indi/indistd.h"
+#include "indi/indimount.h"
+#include "ekos/analyze/analyze.h"
 #include "skymapcomposite.h"
 #include "mosaiccomponent.h"
 #include "mosaictiles.h"
@@ -2878,7 +2880,7 @@ int SchedulerProcess::runSchedulerIteration()
 
     // TODO: At some point we should require that timerState and timerInterval
     // be explicitly set in all iterations. Not there yet, would require too much
-    // refactoring of the scheduler. When we get there, we'd exectute the following here:
+    // refactoring of the scheduler. When we get there, we'd execute the following here:
     // timerState = RUN_NOTHING;    // don't like this comment, it should always set a state and interval!
     // timerInterval = -1;
     moduleState()->setIterationSetup(false);
@@ -4081,7 +4083,11 @@ void SchedulerProcess::setMountStatus(ISD::Mount::Status status)
     if (moduleState()->schedulerState() == SCHEDULER_PAUSED || activeJob() == nullptr)
         return;
 
-    qCDebug(KSTARS_EKOS_SCHEDULER) << "Mount State changed to" << status;
+    // avoid log flooding
+    if (m_lastMountStatus != status)
+        qCDebug(KSTARS_EKOS_SCHEDULER) << "Mount State changed to" << ISD::Mount::getMountStatusString(status);
+
+    m_lastMountStatus = status;
 
     /* If current job is scheduled and has not started yet, wait */
     if (SCHEDJOB_SCHEDULED == activeJob()->getState())
@@ -4093,7 +4099,6 @@ void SchedulerProcess::setMountStatus(ISD::Mount::Status status)
         case SCHEDSTAGE_SLEWING:
         {
             qCDebug(KSTARS_EKOS_SCHEDULER) << "Slewing stage...";
-
             if (status == ISD::Mount::MOUNT_TRACKING)
             {
                 appendLogText(i18n("Job '%1' slew is complete.", activeJob()->getName()));

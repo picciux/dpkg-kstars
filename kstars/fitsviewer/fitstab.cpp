@@ -31,7 +31,12 @@
 #include <QUrl>
 #include <QDialog>
 
+#include <KLocalizedString>
+
 constexpr int CAT_OBJ_SORT_ROLE = Qt::UserRole + 1;
+const auto TEXT_START = ki18n("Start");
+const auto TEXT_STOP = ki18n("Stop");
+const auto TEXT_STOPPING = ki18n("Stopping...");
 
 FITSTab::FITSTab(FITSViewer *parent) : QWidget(parent)
 {
@@ -41,7 +46,7 @@ FITSTab::FITSTab(FITSViewer *parent) : QWidget(parent)
     undoStack->clear();
     connect(undoStack, SIGNAL(cleanChanged(bool)), this, SLOT(modifyFITSState(bool)));
 
-    m_PlateSolve.reset(new PlateSolve(this));
+    m_PlateSolve = new PlateSolve(this);
     m_CatalogObjectWidget = new QDialog(this);
     m_LiveStackingWidget = new QDialog(this);
     statWidget = new QDialog(this);
@@ -111,7 +116,7 @@ bool FITSTab::setupView(FITSMode mode, FITSScale filter)
 {
     if (m_View.isNull())
     {
-        m_View.reset(new FITSView(this, mode, filter));
+        m_View.reset(new FITSView(nullptr, mode, filter));
         m_View->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         QVBoxLayout *vlayout = new QVBoxLayout();
 
@@ -137,10 +142,10 @@ bool FITSTab::setupView(FITSMode mode, FITSScale filter)
                 stat.statsTable->setSpan(i, 0, 1, 3);
         }
 
-        connect(m_PlateSolve.get(), &PlateSolve::clicked, this, &FITSTab::extractImage);
+        connect(m_PlateSolve.data(), &PlateSolve::clicked, this, &FITSTab::extractImage);
 
         fitsTools->addItem(statWidget, i18n("Statistics"));
-        fitsTools->addItem(m_PlateSolve.get(), i18n("Plate Solving"));
+        fitsTools->addItem(m_PlateSolve, i18n("Plate Solving"));
 
         // Setup the Catalog Object page
         m_CatalogObjectUI.setupUi(m_CatalogObjectWidget);
@@ -151,6 +156,11 @@ bool FITSTab::setupView(FITSMode mode, FITSScale filter)
         if (mode == FITS_LIVESTACKING)
         {
             m_LiveStackingUI.setupUi(m_LiveStackingWidget);
+            m_LiveStackingUI.GeneralMinimizeWidget->setupUI(Options::fitsLSHideGeneral(), &Options::setFitsLSHideGeneral);
+            m_LiveStackingUI.CalibrationMinimizeWidget->setupUI(Options::fitsLSHideCalibration(), &Options::setFitsLSHideCalibration);
+            m_LiveStackingUI.AlignmentMinimizeWidget->setupUI(Options::fitsLSHideAlignment(), &Options::setFitsLSHideAlignment);
+            m_LiveStackingUI.StackingMinimizeWidget->setupUI(Options::fitsLSHideStacking(), &Options::setFitsLSHideStacking);
+            m_LiveStackingUI.PostProcMinimizeWidget->setupUI(Options::fitsLSHidePostProc(), &Options::setFitsLSHidePostProc);
             m_LiveStackingItem = fitsTools->addItem(m_LiveStackingWidget, i18n("Live Stacking"));
             initLiveStacking();
         }
@@ -907,23 +917,11 @@ void FITSTab::initLiveStacking()
     connect(m_LiveStackingUI.StackDirB, &QPushButton::clicked, this, &FITSTab::selectLiveStack);
     connect(m_LiveStackingUI.StartB, &QPushButton::clicked, this, &FITSTab::liveStack);
     connect(m_LiveStackingUI.SaveB, &QPushButton::clicked, this, &FITSTab::saveSettings);
-    connect(m_LiveStackingUI.ReprocessB, &QPushButton::clicked, this, [this]
-    {
-        if(m_View && m_View->imageData() && m_View->imageData()->stack())
-        {
-            if (!m_View->imageData()->stack()->isStackedImageEmpty())
-            {
-                m_LiveStackingUI.ReprocessB->setEnabled(false);
-                m_LiveStackingUI.StartB->setEnabled(false);
-                viewer->restack(getUID());
-                m_View->redoPostProcessStack(getPPSettings());
-            }
-        }
-    });
-
+    connect(m_LiveStackingUI.ReprocessB, &QPushButton::clicked, this, &FITSTab::redoPostProcessing);
     connect(m_LiveStackingUI.MasterDarkB, &QPushButton::clicked, this, &FITSTab::selectLiveStackMasterDark);
     connect(m_LiveStackingUI.MasterFlatB, &QPushButton::clicked, this, &FITSTab::selectLiveStackMasterFlat);
     connect(m_LiveStackingUI.AlignMasterB, &QPushButton::clicked, this, &FITSTab::selectLiveStackAlignSub);
+    connect(m_LiveStackingUI.PostProcGroupBox, &QGroupBox::toggled, this, &FITSTab::redoPostProcessing);
 
     // Other connections used by Live Stacking
     connect(m_View.get(), &FITSView::plateSolveSub, this, &FITSTab::plateSolveSub);
@@ -947,6 +945,7 @@ void FITSTab::initSettings()
     m_LiveStackingUI.LowSigma->setValue(Options::fitsLSLowSigma());
     m_LiveStackingUI.HighSigma->setValue(Options::fitsLSHighSigma());
     m_LiveStackingUI.WinsorCutoff->setValue(Options::fitsLSWinsorCutoff());
+    m_LiveStackingUI.PostProcGroupBox->setChecked(Options::fitsLSPostProc());
     m_LiveStackingUI.DeconvAmt->setValue(Options::fitsLSDeconvAmt());
     m_LiveStackingUI.PSFSigma->setValue(Options::fitsLSPSFSigma());
     m_LiveStackingUI.DenoiseAmt->setValue(Options::fitsLSDenoiseAmt());
@@ -967,6 +966,7 @@ void FITSTab::saveSettings()
     Options::setFitsLSLowSigma(m_LiveStackingUI.LowSigma->value());
     Options::setFitsLSHighSigma(m_LiveStackingUI.HighSigma->value());
     Options::setFitsLSWinsorCutoff(m_LiveStackingUI.WinsorCutoff->value());
+    Options::setFitsLSPostProc(m_LiveStackingUI.PostProcGroupBox->isChecked());
     Options::setFitsLSDeconvAmt(m_LiveStackingUI.DeconvAmt->value());
     Options::setFitsLSPSFSigma(m_LiveStackingUI.PSFSigma->value());
     Options::setFitsLSDenoiseAmt(m_LiveStackingUI.DenoiseAmt->value());
@@ -999,6 +999,7 @@ LiveStackData FITSTab::getAllSettings()
 LiveStackPPData FITSTab::getPPSettings()
 {
     LiveStackPPData data;
+    data.postProcess = m_LiveStackingUI.PostProcGroupBox->isChecked();
     data.deconvAmt = m_LiveStackingUI.DeconvAmt->value();
     data.PSFSigma = m_LiveStackingUI.PSFSigma->value();
     data.denoiseAmt = m_LiveStackingUI.DenoiseAmt->value();
@@ -1006,6 +1007,18 @@ LiveStackPPData FITSTab::getPPSettings()
     data.sharpenKernal = m_LiveStackingUI.SharpenKernal->value();
     data.sharpenSigma = m_LiveStackingUI.SharpenSigma->value();
     return data;
+}
+
+void FITSTab::redoPostProcessing()
+{
+#if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
+    if(m_View && m_View->imageData() && m_View->imageData()->stack())
+    {
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
+        viewer->restack(getUID());
+        m_View->redoPostProcessStack(getPPSettings());
+    }
+#endif // !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
 }
 
 void FITSTab::selectLiveStack()
@@ -1052,7 +1065,7 @@ void FITSTab::selectLiveStackMasterDark()
 {
     QString selectedFilter;
     QString file = QFileDialog::getOpenFileName(this, i18nc("@title:window", "Select Master Dark"),
-                                m_CurrentStackDir, "FITS (*.fits *.fits.gz *.fit);;XISF (*.xisf)", &selectedFilter);
+                   m_CurrentStackDir, "FITS (*.fits *.fits.gz *.fit);;XISF (*.xisf)", &selectedFilter);
     if (!file.isNull())
     {
         QUrl sequenceURL = QUrl::fromLocalFile(file);
@@ -1268,26 +1281,26 @@ void FITSTab::setAutoStretch()
 
 void FITSTab::extractImage()
 {
-    connect(m_PlateSolve.get(), &PlateSolve::extractorSuccess, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::extractorSuccess, this, [this]()
     {
         m_View->updateFrame();
         m_PlateSolve->solveImage(m_View->imageData());
     });
-    connect(m_PlateSolve.get(), &PlateSolve::extractorFailed, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::extractorFailed, this, [this]()
     {
-        disconnect(m_PlateSolve.get());
+        disconnect(m_PlateSolve.data());
     });
-    connect(m_PlateSolve.get(), &PlateSolve::solverFailed, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::solverFailed, this, [this]()
     {
-        disconnect(m_PlateSolve.get());
+        disconnect(m_PlateSolve.data());
     });
-    connect(m_PlateSolve.get(), &PlateSolve::solverSuccess, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::solverSuccess, this, [this]()
     {
         m_View->syncWCSState();
         if (m_View->areObjectsShown())
             // Requery Objects based on new plate solved solution
             m_View->imageData()->searchObjects();
-        disconnect(m_PlateSolve.get());
+        disconnect(m_PlateSolve.data());
     });
     m_PlateSolve->extractImage(m_View->imageData());
 }
@@ -1296,14 +1309,16 @@ void FITSTab::extractImage()
 void FITSTab::liveStack()
 {
     QString text = m_LiveStackingUI.StartB->text().remove('&');
-    if (text == "Start")
+    if (text == TEXT_START.toString())
     {
         m_StackStarted = true;
-        if (getTabName().isEmpty())
+        m_StackCancelled = false;
+        if (m_LiveStackingUI.Stack->text() != m_liveStackDir)
             setTabName(i18n("Watching %1", m_liveStackDir));
         // Start the stack process
-        m_LiveStackingUI.StartB->setText("Cancel");
-        m_LiveStackingUI.ReprocessB->setEnabled(false);
+        m_LiveStackingUI.StartB->setText(TEXT_STOP.toString());
+        m_LiveStackingUI.StartB->setEnabled(true);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
 
         m_liveStackDir = m_LiveStackingUI.Stack->text();
         m_CurrentStackDir = m_liveStackDir;
@@ -1316,11 +1331,11 @@ void FITSTab::liveStack()
         viewer->restack(getUID());
         m_View->loadStack(m_liveStackDir, getAllSettings());
     }
-    else if (text == QString("Cancel"))
+    else if (text == TEXT_STOP.toString())
     {
-        m_LiveStackingUI.StartB->setText("Cancelling...");
+        m_LiveStackingUI.StartB->setText(TEXT_STOPPING.toString());
         m_LiveStackingUI.StartB->setEnabled(false);
-        m_LiveStackingUI.ReprocessB->setEnabled(false);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
         m_View->cancelStack();
     }
 }
@@ -1333,35 +1348,35 @@ void FITSTab::liveStack()
 void FITSTab::plateSolveSub(const double ra, const double dec, const double pixScale, const int index,
                             const int healpix, const LiveStackFrameWeighting &weighting)
 {
-    connect(m_PlateSolve.get(), &PlateSolve::subExtractorSuccess, this, [this, ra, dec, pixScale, index, healpix]
+    connect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, this, [this, ra, dec, pixScale, index, healpix]
             (double medianHFR, int numStars)
     {
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
         m_StackMedianHFR = medianHFR;
         m_StackNumStars = numStars;
         qCDebug(KSTARS_FITS) << "Star extraction complete, plate solving starting...";
         m_PlateSolve->plateSolveSub(m_View->imageData(), ra, dec, pixScale, index, healpix, SSolver::SOLVE);
     });
-    connect(m_PlateSolve.get(), &PlateSolve::subExtractorFailed, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, this, [this]()
     {
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subSolverFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, nullptr, nullptr);
         const bool timedOut = false;
         const bool success = false;
         m_View->imageData()->solverDone(timedOut, success, m_StackMedianHFR, m_StackNumStars);
     });
-    connect(m_PlateSolve.get(), &PlateSolve::subSolverFailed, this, [this, ra, dec, pixScale]()
+    connect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, this, [this, ra, dec, pixScale]()
     {
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
         if (m_StackExtendedPlateSolve)
         {
             // Failed to plate solve on extended criteria so just fail
-            disconnect(m_PlateSolve.get(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
-            disconnect(m_PlateSolve.get(), &PlateSolve::subSolverFailed, nullptr, nullptr);
+            disconnect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
+            disconnect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, nullptr, nullptr);
             const bool timedOut = false;
             const bool success = false;
             m_View->imageData()->solverDone(timedOut, success, m_StackMedianHFR, m_StackNumStars);
@@ -1374,12 +1389,12 @@ void FITSTab::plateSolveSub(const double ra, const double dec, const double pixS
             m_PlateSolve->plateSolveSub(m_View->imageData(), ra, dec, pixScale, -1, -1, SSolver::SOLVE);
         }
     });
-    connect(m_PlateSolve.get(), &PlateSolve::subSolverSuccess, this, [this]()
+    connect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, this, [this]()
     {
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
-        disconnect(m_PlateSolve.get(), &PlateSolve::subSolverFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subExtractorFailed, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverSuccess, nullptr, nullptr);
+        disconnect(m_PlateSolve.data(), &PlateSolve::subSolverFailed, nullptr, nullptr);
         const bool timedOut = false;
         const bool success = true;
         m_View->imageData()->solverDone(timedOut, success, m_StackMedianHFR, m_StackNumStars);
@@ -1408,8 +1423,7 @@ void FITSTab::plateSolveSub(const double ra, const double dec, const double pixS
 
 void FITSTab::stackInProgress()
 {
-    m_LiveStackingUI.StartB->setEnabled(false);
-    m_LiveStackingUI.ReprocessB->setEnabled(false);
+    m_LiveStackingUI.PostProcGroupBox->setEnabled(false);
     viewer->restack(getUID());
 }
 
@@ -1436,11 +1450,19 @@ QString FITSTab::getTabTitle() const
     if (!m_StackStarted && !m_TabName.isEmpty())
         title = m_TabName;
     else if (m_StackStarted && m_TabName.isEmpty())
+    {
         // This won't happen as when m_StackStarted is set to true, it also sets m_TabName.
         // See liveStack().
-        title = i18n("(%1) Watching %2", m_StackSubsProcessed, m_liveStackDir);
+        QString start = (m_StackCancelled) ? i18n("Stopped Watching (%1)", m_StackSubsProcessed) :
+                                             i18n("(%1) Watching", m_StackSubsProcessed);
+        title = i18n("%1 %2", start, m_liveStackDir);
+    }
     else if (m_StackStarted && !m_TabName.isEmpty())
-        title = i18n("(%1) %2", m_StackSubsProcessed, m_TabName);
+    {
+        QString start = (m_StackCancelled) ? i18n("Stopped (%1)", m_StackSubsProcessed) :
+                                             i18n("(%1)", m_StackSubsProcessed);
+        title = i18n("%1 %2", start, m_TabName);
+    }
     return title;
 }
 
@@ -1449,10 +1471,21 @@ void FITSTab::updateStackSNR(const double SNR)
     m_LiveStackingUI.ImageSNR->setText(QString("%1").arg(SNR, 0, 'f', 2));
 }
 
-void FITSTab::resetStack()
+void FITSTab::resetStack(const bool cancelled)
 {
-    m_LiveStackingUI.StartB->setText("Start");
-    m_LiveStackingUI.StartB->setEnabled(true);
-    m_LiveStackingUI.ReprocessB->setText("Reprocess");
-    m_LiveStackingUI.ReprocessB->setEnabled(true);
+    if (cancelled)
+    {
+        // Cancel request has been actioned
+        m_LiveStackingUI.StartB->setText(TEXT_START.toString());
+        m_LiveStackingUI.StartB->setEnabled(true);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(true);
+        m_StackCancelled = true;
+        viewer->stackCancelled(getUID());
+    }
+    else if (m_StackSubsTotal <= m_StackSubsProcessed + m_StackSubsFailed)
+    {
+        // If stacking is complete make action buttons active
+        m_LiveStackingUI.StartB->setEnabled(true);
+        m_LiveStackingUI.PostProcGroupBox->setEnabled(true);
+    }
 }

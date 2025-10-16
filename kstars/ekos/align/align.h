@@ -70,7 +70,7 @@ class ManualRotator;
  * is supported in order to align the solved images to a particular orientation in the sky. The manual rotation assistant is an interactive
  * tool that helps the user to arrive at the desired framing.
  * Align module provide Polar Align Helper tool which enables easy-to-follow polar alignment procedure given wide FOVs (> 1.5 degrees)
- * Legacy polar aligment is deprecated.
+ * Legacy polar alignment is deprecated.
  *@author Jasem Mutlaq
  *@version 2.0
  */
@@ -765,7 +765,8 @@ class Align : public QWidget, public Ui::Align
         BlindState useBlindScale {BLIND_IDLE};
         /// Was solving with position off used?
         BlindState useBlindPosition {BLIND_IDLE};
-
+        /// Was solving with dynamic threshold off used?
+        BlindState useBlindDynamicThreshold {BLIND_IDLE};
         // FOV
         double m_CameraPixelWidth { -1 };
         double m_CameraPixelHeight { -1 };
@@ -800,6 +801,8 @@ class Align : public QWidget, public Ui::Align
         double m_TargetDiffTotal { 1e6 };
         double m_TargetDiffRA { 1e6 };
         double m_TargetDiffDE { 1e6 };
+        double m_TargetDiffAZ { 1e6 };
+        double m_TargetDiffAL { 1e6 };
 
         /// Progress icon if the solver is running
         std::unique_ptr<QProgressIndicator> pi;
@@ -925,7 +928,7 @@ class Align : public QWidget, public Ui::Align
         static constexpr uint16_t DELAY_THRESHOLD_NOTIFY { 3000 };
 
         // Mount Model
-        // N.B. We do not need to use "smart pointer" here as the object memroy
+        // N.B. We do not need to use "smart pointer" here as the object memory
         // is taken care of by the Qt framework.
         MountModel *m_MountModel {nullptr};
         PolarAlignmentAssistant *m_PolarAlignmentAssistant {nullptr};
@@ -951,5 +954,10 @@ class Align : public QWidget, public Ui::Align
         double m_ScaleUsed = 0;
         double m_RAUsed = 0;
         double m_DECUsed = 0;
+
+        double m_dynamicThreshold { 2.0 }; // Initialize with default from parameters.h
+
+        void resetDynamicThreshold();
+        static constexpr double DYNAMIC_THRESHOLD_STARS {100};
 };
 }

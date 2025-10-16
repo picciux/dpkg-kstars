@@ -135,9 +135,10 @@ MountMotionWidget::MountMotionWidget(QWidget *parent)
 /////////////////////////////////////////////////////////////////////////////////////////
 void MountMotionWidget::syncSpeedInfo(INDI::PropertySwitch svp)
 {
-    if (svp.isValid())
+    int index = svp.isValid() ? svp.findOnSwitchIndex() : -1;
+
+    if (index >= 0)
     {
-        int index = svp.findOnSwitchIndex();
         speedSliderObject->setEnabled(true);
         speedSliderObject->setMaximum(svp.count() - 1);
         speedSliderObject->setValue(index);
@@ -161,8 +162,11 @@ void MountMotionWidget::updateSpeedInfo(INDI::PropertySwitch svp)
     if (svp.isValid())
     {
         auto index = svp.findOnSwitchIndex();
-        speedSliderObject->setProperty("value", index);
-        speedLabelObject->setProperty("text", i18nc(libindi_strings_context, svp[index].getLabel()));
+        if (index >= 0 && index < static_cast<int>(svp.count()))
+        {
+            speedSliderObject->setProperty("value", index);
+            speedLabelObject->setProperty("text", i18nc(libindi_strings_context, svp[index].getLabel()));
+        }
     }
 }
 

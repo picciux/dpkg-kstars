@@ -114,7 +114,7 @@ class SequenceJob : public QObject
         ~SequenceJob() = default;
 
         ////////////////////////////////////////////////////////////////////////
-        /// Capture Fuctions
+        /// Capture Functions
         ////////////////////////////////////////////////////////////////////////
         /**
          * @brief startCapturing Initialize the camera and start capturing
@@ -376,6 +376,11 @@ class SequenceJob : public QObject
         {
             state->autoFocusReady = value;
         }
+
+        // ////////////////////////////////////////////////////////////////////////////
+        // Facade to devices
+        // ////////////////////////////////////////////////////////////////////////////
+        QString getActiveCamera() const;
 
         /**
          * @brief Central entry point to start all activities that are necessary

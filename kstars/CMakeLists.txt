@@ -17,8 +17,9 @@ if (NOT ANDROID)
 endif ()
 
 if(MSVC)
-    add_definitions(-D_USE_MATH_DEFINES=1)
-    add_definitions(-DNOMINMAX)
+    add_compile_definitions(_USE_MATH_DEFINES=1)
+    add_compile_definitions(NOMINMAX)
+    add_compile_options(/bigobj)
 endif()
 
 include(CheckCXXSymbolExists)
@@ -189,9 +190,6 @@ if (INDI_FOUND)
             ekos/guide/manualdither.ui
             ekos/guide/manualpulse.ui
             ekos/observatory/observatory.ui
-            #TODO remove from GIT
-            #ekos/guide/guider.ui
-            #ekos/guide/rcalibration.ui
             # Auxiliary
             ekos/auxiliary/filtersettings.ui
             ekos/auxiliary/buildfilteroffsets.ui
@@ -364,9 +362,7 @@ if (INDI_FOUND)
             ekos/guide/internalguide/guidealgorithms.cpp
             ekos/guide/internalguide/calibrationprocess.cpp
             ekos/guide/internalguide/internalguider.cpp
-            #ekos/guide/internalguide/guider.cpp
             ekos/guide/internalguide/matr.cpp
-            #ekos/guide/internalguide/rcalibration.cpp
             ekos/guide/internalguide/vect.cpp
             ekos/guide/internalguide/imageautoguiding.cpp
             ekos/guide/internalguide/guidelog.cpp
@@ -963,6 +959,7 @@ set(kstars_extra_SRCS
     #to minimize number of indef KSTARS_LITE
     skypainter.cpp    
     auxiliary/screencapture.cpp    
+    auxiliary/minimizewidget.cpp
     )
 
 SET(kstars_extra_kstars_SRCS
@@ -1266,7 +1263,7 @@ set(kstarslite_SRCS ${kstarslite_SRCS} ${fits_klite_SRCS} ${hough_SRCS} ${fits2_
 IF (NOT ANDROID)
     # GSL
     find_package(GSL REQUIRED)
-    IF(BUILD_QT5)
+    IF(NOT BUILD_WITH_QT6)
        qt5_add_dbus_adaptor(kstars_SRCS org.kde.kstars.xml kstars.h KStars)
        qt5_add_dbus_adaptor(kstars_SRCS org.kde.kstars.SimClock.xml simclock.h SimClock)
        qt5_add_dbus_adaptor(kstars_SRCS org.kde.kstars.FOV.xml fov.h FOV)
@@ -1276,7 +1273,7 @@ IF (NOT ANDROID)
        qt6_add_dbus_adaptor(kstars_SRCS org.kde.kstars.FOV.xml fov.h FOV)
     ENDIF()
     IF (INDI_FOUND)
-        IF(BUILD_QT5)
+        IF(NOT BUILD_WITH_QT6)
             # INDI
             qt5_add_dbus_adaptor(kstars_SRCS org.kde.kstars.INDI.xml indi/indidbus.h INDIDBus)
             qt5_add_dbus_adaptor(kstars_SRCS org.kde.kstars.INDI.GenericDevice.xml indi/indistd.h ISD::GenericDevice)
@@ -1359,7 +1356,7 @@ IF (NOT ANDROID)
         Eigen3::Eigen
         GSL::gsl
     )
-    if (BUILD_QT5)
+    if (NOT BUILD_WITH_QT6)
         target_link_libraries(KStarsLib
             KF5::Crash
             KF5::I18n
@@ -1371,7 +1368,7 @@ IF (NOT ANDROID)
         )
     else()
         target_link_libraries(KStarsLib
-            KF6::Crash
+            # KF6::Crash
             KF6::I18n
             KF6::XmlGui
             KF6::NewStuffWidgets
@@ -1499,17 +1496,13 @@ if (NOVA_FOUND)
     target_link_libraries(KStarsLib ${NOVA_LIBRARIES})
 endif()
 
-if (LibXISF_FOUND)
-    target_link_libraries(KStarsLib LibXISF::LibXISF)
-endif()
+    if (LibXISF_FOUND)
+        target_link_libraries(KStarsLib LibXISF::LibXISF)
+    endif()
 
-#FIXME Enable OpenGL Later
-#if( OPENGL_FOUND )
-#    target_link_libraries(KStarsLib
-#    ${OPENGL_LIBRARIES}
-#    ${QT_QTOPENGL_LIBRARY}
-#    )
-#endif( OPENGL_FOUND )
+    if (Sentry_FOUND)
+        target_link_libraries(KStarsLib sentry::sentry)
+    endif()
 
 if (OpenCV_FOUND)
     target_link_libraries(KStarsLib ${OpenCV_LIBS})
@@ -1528,7 +1521,7 @@ ecm_add_app_icon(KSTARS_APP_SRCS ICONS
     ${CMAKE_CURRENT_SOURCE_DIR}/icons/128-apps-kstars.png
 )
 
-if (BUILD_QT5)
+if (NOT BUILD_WITH_QT6)
     qt5_add_resources(KSTARS_APP_SRCS data/kstars.qrc)
 else()
     qt6_add_resources(KSTARS_APP_SRCS data/kstars.qrc)
@@ -1564,11 +1557,15 @@ if(APPLE)
     message(STATUS "Copying needed files into KStars App Directory: ${KSTARS_APP}")
     execute_process(COMMAND ${CMAKE_COMMAND}
                     -DBUNDLED_DATA_LOCATION=${KSTARS_APP}/Contents/Resources
+                    -DKDE_INSTALL_DATADIR=${KSTARS_APP}/Contents/Resources
                     ${CMAKE_CURRENT_SOURCE_DIR}/data
-                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/kstars/data")
-    execute_process(COMMAND -E env DATA_INSTALL_DIR=${KSTARS_APP}/Contents/Resources
-                    ${CMAKE_COMMAND} --build . --target install
-                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/kstars/data")
+                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/kstars/data"
+                    RESULT_VARIABLE configureOutput)
+    message(STATUS "Data Directory Configure output: ${configureOutput}")
+    execute_process(COMMAND ${CMAKE_COMMAND} --build . --target install
+                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/kstars/data"
+                    RESULT_VARIABLE installOutput)
+    message(STATUS "Data Directory Installation output: ${installOutput}")
     file(COPY
         "${CMAKE_CURRENT_SOURCE_DIR}/data/qml"
         DESTINATION "${KSTARS_APP}/Contents/Resources/kstars/")
@@ -1581,15 +1578,15 @@ if(APPLE)
     file(COPY
         "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/gsc"
         DESTINATION "${KSTARS_APP}/Contents/MacOS/")
-    if(BUILD_QT5)
+    if(NOT BUILD_WITH_QT6)
       file(COPY
           "${CMAKE_CURRENT_SOURCE_DIR}/kstars.notifyrc"
           DESTINATION "${KSTARS_APP}/Contents/Resources/knotifications5/")
-    else(BUILD_QT5)
+    else(NOT BUILD_WITH_QT6)
       file(COPY
           "${CMAKE_CURRENT_SOURCE_DIR}/kstars.notifyrc"
           DESTINATION "${KSTARS_APP}/Contents/Resources/knotifications6/")
-    endif(BUILD_QT5)
+    endif(NOT BUILD_WITH_QT6)
     file(COPY
         "${CMAKE_CURRENT_SOURCE_DIR}/kstars.kcfg"
         DESTINATION "${KSTARS_APP}/Contents/Resources/")
@@ -1662,14 +1659,14 @@ if(APPLE)
         list(FILTER CAMLIBS EXCLUDE REGEX "dSYM$")
         file(COPY ${CAMLIBS} DESTINATION "${KSTARS_APP}/Contents/Resources/DriverSupport/gphoto/CAMLIBS/")
     endif(NOT INDI_SERVER)
-    if(BUILD_QT5)
+    if(NOT BUILD_WITH_QT6)
       execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/FrameworksForVLC.zip"
           WORKING_DIRECTORY "${KSTARS_APP}/Contents/")
       execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/backend.zip"
           WORKING_DIRECTORY "${KSTARS_APP}/Contents/Plugins/")
       execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/phonon/vlc.zip"
           WORKING_DIRECTORY "${KSTARS_APP}/Contents/Plugins/")
-    endif(BUILD_QT5)
+    endif(NOT BUILD_WITH_QT6)
     execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/xplanet-data.zip"
         WORKING_DIRECTORY "${KSTARS_APP}/Contents/Resources/kstars/")
     execute_process(COMMAND "${CMAKE_COMMAND}" "-E" "tar" "xvz" "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/sounds.zip"
@@ -1682,7 +1679,8 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/kstars-mac-files/macosbundle.plist.in"
     )
-    # This last one is for ediing purposes.  Craft puts KStars.app in ${CMAKE_BINARY_DIR}/bin and building wihtout craft places it in ${CMAKE_BINARY_DIR}/kstars
+    # This last one is for editing purposes. Craft puts KStars.app in ${CMAKE_BINARY_DIR}/bin
+    # and building without craft places it in ${CMAKE_BINARY_DIR}/kstars
     file(COPY
       "${KSTARS_APP}"
       DESTINATION "${CMAKE_BINARY_DIR}/kstars/")
@@ -1699,11 +1697,11 @@ install(TARGETS kstars ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 if(NOT APPLE) # The desktop file is not needed on MacOS and the other two are bundled above
 install(PROGRAMS org.kde.kstars.desktop DESTINATION ${KDE_INSTALL_APPDIR})
 install(FILES kstars.kcfg DESTINATION ${KDE_INSTALL_KCFGDIR})
-IF(BUILD_QT5)
+IF(NOT BUILD_WITH_QT6)
   install(FILES kstars.notifyrc DESTINATION ${KNOTIFYRC_INSTALL_DIR})
 else()
   install(FILES kstars.notifyrc DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR})
-endif(BUILD_QT5)
+endif(NOT BUILD_WITH_QT6)
 endif(NOT APPLE)
 
 if(INDI_FOUND)

@@ -395,7 +395,7 @@ QString SequenceJob::setCameraDeviceProperties()
                 roi.height(),
                 currentBinX != binning.x()) == false)
         {
-            qCWarning(KSTARS_EKOS_CAPTURE()) << "Cannot set ROI to " << "x =" << roi.x() << ", y =" << roi.y() << ", widht =" <<
+            qCWarning(KSTARS_EKOS_CAPTURE()) << "Cannot set ROI to " << "x =" << roi.x() << ", y =" << roi.y() << ", width =" <<
                                              roi.width() << "height =" << roi.height();
             setStatus(JOB_ERROR);
             emit captureStarted(CAPTURE_FRAME_ERROR);
@@ -569,6 +569,14 @@ void SequenceJob::addMount(ISD::Mount * scope)
 void SequenceJob::setDome(ISD::Dome * dome)
 {
     state->m_CameraState->hasDome = (dome != nullptr);
+}
+
+QString SequenceJob::getActiveCamera() const
+{
+    if (devices->getActiveCamera())
+        return devices->getActiveCamera()->getDeviceName();
+    else
+        return "";
 }
 
 double SequenceJob::currentTemperature() const

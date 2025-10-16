@@ -1786,6 +1786,26 @@
       <label>Radius in position (degrees) to use with Fitsviewer Solving.</label>
       <default>30</default>
    </entry>
+   <entry name="fitsLSHideGeneral" type="bool">
+      <whatsthis>Live Stacking Minimise General Options Widget</whatsthis>
+      <default>false</default>
+   </entry>
+   <entry name="fitsLSHideCalibration" type="bool">
+      <whatsthis>Live Stacking Minimise Calibration Options Widget</whatsthis>
+      <default>true</default>
+   </entry>
+   <entry name="fitsLSHideAlignment" type="bool">
+      <whatsthis>Live Stacking Minimise Alignment Options Widget</whatsthis>
+      <default>true</default>
+   </entry>
+   <entry name="fitsLSHideStacking" type="bool">
+      <whatsthis>Live Stacking Minimise Stacking Options Widget</whatsthis>
+      <default>true</default>
+   </entry>
+   <entry name="fitsLSHidePostProc" type="bool">
+      <whatsthis>Live Stacking Minimise Post-Processing Options Widget</whatsthis>
+      <default>true</default>
+   </entry>
    <entry name="fitsLSMasterDark" type="String">
       <whatsthis>Live Stacking master dark</whatsthis>
       <default></default>
@@ -1825,6 +1845,10 @@
    <entry name="fitsLSWinsorCutoff" type="Double">
       <label>Live Stacking sigma clipping windzor cutoff</label>
       <default>3.0</default>
+   </entry>
+   <entry name="fitsLSPostProc" type="bool">
+      <whatsthis>Live Stacking Post Processing switch</whatsthis>
+      <default>false</default>
    </entry>
    <entry name="fitsLSDeconvAmt" type="Double">
       <label>Live Stacking deconvolution amount</label>
@@ -2820,6 +2844,10 @@
       <entry name="AstrometryAutoDownsample" type="Bool">
          <label>Automatically downsample based on image size.</label>
          <default>true</default>
+      </entry>
+      <entry name="AstrometryDynamicThreshold" type="Bool">
+         <label>Adjust StellarSolver threshold dynamically based on source extractor detected stars to expedite solving.</label>
+         <default>false</default>
       </entry>
       <entry name="AstrometryUsePosition" type="Bool">
          <label>Set estimated position to speed up astrometry solver as it does not have to search in other areas of the sky.</label>

@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 3.16.0 FATAL_ERROR)
 
 PROJECT(kstars
-        VERSION 3.7.8
+        VERSION 3.7.9
         DESCRIPTION "A Desktop Planetarium for KDE"
         HOMEPAGE_URL "https://edu.kde.org/kstars"
         LANGUAGES CXX C)
@@ -13,26 +13,31 @@ set (KSTARS_BUILD_RELEASE "Stable")
 set (CMAKE_CXX_STANDARD 17)
 
 # Option to choose between Qt5 and Qt6
-option(BUILD_WITH_QT6 "Build using Qt6" Off)
-option(BUILD_QT5 "Build using Qt5" On)
+# This is used by KDE CI
+option(BUILD_WITH_QT6 "Build using Qt6" OFF)
 
-if(BUILD_WITH_QT6)
-    set(BUILD_QT5 Off)
-endif(BUILD_WITH_QT6)
-
-if(BUILD_QT5)
+if(NOT BUILD_WITH_QT6)
     set(QT_MIN_VERSION 5.12.7)
     set(KF5_MIN_VERSION 5.68.0)
+    set(QT_MAJOR_VERSION 5)
 else()
     set(QT_MIN_VERSION 6.6.0)
     set(KF6_MIN_VERSION 6.6.0)
-endif(BUILD_QT5)
+    set(QT_MAJOR_VERSION 6)
+endif()
 
 # Build KStars Lite with -DBUILD_KSTARS_LITE=ON
 option(BUILD_KSTARS_LITE "Build KStars Lite" OFF)
 
 # Build the Python bindings for the SkyMesh indexation
 option(BUILD_PYKSTARS "Build SkyMesh Python Bindings" OFF)
+
+# Enable Sentry crash reporting (desktop only)
+if(NOT ANDROID AND NOT BUILD_KSTARS_LITE)
+    option(ENABLE_SENTRY "Enable Sentry crash reporting" OFF)
+else()
+    set(ENABLE_SENTRY OFF)
+endif()
 
 # KStars Timestap build
 string(TIMESTAMP KSTARS_BUILD_TS UTC)
@@ -71,6 +76,21 @@ find_package(ECM ${KF5_MIN_VERSION} REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules" ${CMAKE_MODULE_PATH})
 
+# N.B. The includes must be always before find_package(Qt6 ...)
+include(ExternalProject)
+include(ECMInstallIcons)
+include(ECMAddAppIcon)
+if(NOT BUILD_WITH_QT6)
+    include(KDEInstallDirs)
+else()
+    include(KDEInstallDirs6)
+endif()
+include(MacroBoolTo01)
+include(ECMQtDeclareLoggingCategory)
+include(KDECompilerSettings NO_POLICY_SCOPE)
+include(KDECMakeSettings)
+include(FeatureSummary)
+
 if(BUILD_KSTARS_LITE)
     if("${CMAKE_TOOLCHAIN_FILE}" MATCHES "android.toolchain.cmake$")
         set(QT_ANDROID $ENV{QT_ANDROID})
@@ -104,25 +124,12 @@ if(BUILD_KSTARS_LITE)
         find_package(Qt5 ${QT_MIN_VERSION} REQUIRED COMPONENTS Gui Qml Quick QuickControls2 Xml Svg Sql Network Positioning PositioningQuick Concurrent WebSockets ${QT_EXTRA_COMPONENTS})
     endif()
 else()
-    if(BUILD_QT5)
+    if(NOT BUILD_WITH_QT6)
         find_package(Qt5 ${QT_MIN_VERSION} REQUIRED COMPONENTS Gui Qml Quick Xml Sql Svg Network PrintSupport Concurrent WebSockets)
     else()
         find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Gui Qml Quick Xml Sql Svg SvgWidgets Network PrintSupport Concurrent WebSockets DBus)
-    endif(BUILD_QT5)
+    endif(NOT BUILD_WITH_QT6)
 endif()
-include(ExternalProject)
-include(ECMInstallIcons)
-include(ECMAddAppIcon)
-if(BUILD_QT5)
-    include(KDEInstallDirs)
-else()
-    include(KDEInstallDirs6)
-endif()
-include(MacroBoolTo01)
-include(ECMQtDeclareLoggingCategory)
-include(KDECompilerSettings NO_POLICY_SCOPE)
-include(KDECMakeSettings)
-include(FeatureSummary)
 
 # Load the frameworks we need
 if(BUILD_KSTARS_LITE)
@@ -140,7 +147,7 @@ if(BUILD_KSTARS_LITE)
         find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS Auth Config Crash WidgetsAddons NewStuff I18n KIO XmlGui Plotting Notifications)
     endif()
 else(BUILD_KSTARS_LITE)
-    if(BUILD_QT5)
+    if(NOT BUILD_WITH_QT6)
        # Find Optional package NotifyConfig for desktop notifications
        find_package(KF5 ${KF5_MIN_VERSION} COMPONENTS NotifyConfig)
        MACRO_BOOL_TO_01(KF5NotifyConfig_FOUND HAVE_NOTIFYCONFIG)
@@ -148,7 +155,6 @@ else(BUILD_KSTARS_LITE)
        find_package(KF5 ${KF5_MIN_VERSION} REQUIRED COMPONENTS
          Config
          Crash
-         DocTools
          WidgetsAddons
          NewStuff
          I18n
@@ -166,7 +172,6 @@ else(BUILD_KSTARS_LITE)
         find_package(KF6 ${KF5_MIN_VERSION} REQUIRED COMPONENTS
           Config
           Crash
-          DocTools
           WidgetsAddons
           NewStuff
           I18n
@@ -176,7 +181,7 @@ else(BUILD_KSTARS_LITE)
           Notifications
         )
        set(KFX_VERSION ${KF6_VERSION})
-    endif(BUILD_QT5)
+    endif(NOT BUILD_WITH_QT6)
 endif(BUILD_KSTARS_LITE)
 
 ## Eigen3 Library
@@ -296,7 +301,7 @@ find_package(Xplanet)
 set_package_properties(Xplanet PROPERTIES DESCRIPTION "Renders an image of all the major planets and most satellites" URL "http://xplanet.sourceforge.net" TYPE RUNTIME PURPOSE "Gives KStars support for xplanet.")
 
 # Qt5/6 Data Visualization
-if (BUILD_QT5)
+if (NOT BUILD_WITH_QT6)
    find_package(Qt5DataVisualization)
    MACRO_BOOL_TO_01(Qt5DataVisualization_FOUND HAVE_DATAVISUALIZATION)
 else()
@@ -314,7 +319,7 @@ MACRO_BOOL_TO_01(LibXISF_FOUND HAVE_XISF)
 #set_package_properties(AstrometryNet PROPERTIES DESCRIPTION "Astrometrics Library" URL "http://www.astrometry.net" TYPE RUNTIME PURPOSE "Support for plate solving in KStars.")
 
 ## Key Chain
-if (BUILD_QT5)
+if (NOT BUILD_WITH_QT6)
    find_package(Qt5Keychain)
    MACRO_BOOL_TO_01(Qt5Keychain_FOUND HAVE_KEYCHAIN)
 else()
@@ -324,7 +329,7 @@ endif()
 
 ## OpenCV
 # Disable OpenCV on Windows until KDE's Craft fixes the OpenCV package.
-find_package(OpenCV COMPONENTS core highgui imgcodecs calib3d photo)
+find_package(OpenCV COMPONENTS core imgcodecs calib3d photo)
 MACRO_BOOL_TO_01(OpenCV_FOUND HAVE_OPENCV)
 if (OpenCV_FOUND)
     set_package_properties(OpenCV PROPERTIES DESCRIPTION "OpenCV library" URL "https://opencv.org" TYPE OPTIONAL PURPOSE "Standard library of image processing functions.")
@@ -334,6 +339,13 @@ endif()
 ## OpenGL
 find_package(OpenGL)
 set_package_properties(OpenGL PROPERTIES DESCRIPTION "Open Graphics Library" URL "https://www.opengl.org/" TYPE OPTIONAL PURPOSE "Support for hardware rendering in KStars.")
+
+## Sentry
+if(ENABLE_SENTRY)
+    find_package(Sentry)    
+    MACRO_BOOL_TO_01(Sentry_FOUND HAVE_SENTRY)
+    set_package_properties(Sentry PROPERTIES DESCRIPTION "Sentry crash reporting SDK" URL "https://sentry.io" TYPE OPTIONAL PURPOSE "Provides crash reporting and error tracking for KStars.")
+endif()
 
 add_definitions(-DQT_USE_FAST_CONCATENATION -DQT_USE_FAST_OPERATOR_PLUS)
 add_definitions(-DQT_NO_URL_CAST_FROM_STRING)
@@ -516,17 +528,7 @@ IF (NOT ANDROID)
     enable_testing(true)
     add_subdirectory(Tests)
     ENDIF()
-    # Make it possible to use the po files fetched by the fetch-translations step    
     ki18n_install(po)
-    if (BUILD_QT5)
-        find_package(KF5DocTools CONFIG)
-    else()
-        find_package(KF6DocTools CONFIG)
-    endif()
-    if(KF5DocTools_FOUND OR KF6DocTools_FOUND)
-        kdoctools_install(po)
-    endif()
-
 ENDIF ()
 
 if(NOT APPLE) #This is not used on MacOS

@@ -448,7 +448,7 @@ void FITSView::loadStack(const QString &inDir, const LiveStackData &params)
         m_ImageData->setBayerParams(&param);
 
     connect(m_ImageData.data(), &FITSData::plateSolveSub, this, [this](const double ra, const double dec,
-                    const double pixScale, const int index, const int healpix, const LiveStackFrameWeighting weighting)
+            const double pixScale, const int index, const int healpix, const LiveStackFrameWeighting weighting)
     {
         emit plateSolveSub(ra, dec, pixScale, index, healpix, weighting);
     });
@@ -463,21 +463,25 @@ void FITSView::loadStack(const QString &inDir, const LiveStackData &params)
         emit stackInProgress();
     });
 
-    connect(m_ImageData.data(), &FITSData::stackReady, this, [this]()
+    connect(m_ImageData.data(), &FITSData::stackReady, this, [this](const bool cancelled)
     {
-        auto stack = m_ImageData->stack();
-        if(stack && !stack->isStackedImageEmpty())
+        // Don't reload image if we are cancelling
+        if (!cancelled)
         {
-            emit updateStackSNR(m_ImageData->stack()->getStackSNR());
-            fitsWatcher.setFuture(m_ImageData->loadStackBuffer());
+            auto stack = m_ImageData->stack();
+            if(stack && !stack->isStackedImageEmpty())
+            {
+                emit updateStackSNR(m_ImageData->stack()->getStackSNR());
+                fitsWatcher.setFuture(m_ImageData->loadStackBuffer());
+            }
+            else
+                fitsWatcher.setFuture(m_ImageData->loadFromFile(":/images/noimage.png"));
         }
-        else
-            fitsWatcher.setFuture(m_ImageData->loadFromFile(":/images/noimage.png"));
-        emit resetStack();
+        emit resetStack(cancelled);
     });
 
     connect(m_ImageData.data(), &FITSData::stackUpdateStats, this, [this](const bool ok, const int sub,
-                                                                          const int total, const double meanSNR, const double minSNR, const double maxSNR)
+            const int total, const double meanSNR, const double minSNR, const double maxSNR)
     {
         emit stackUpdateStats(ok, sub, total, meanSNR, minSNR, maxSNR);
     });

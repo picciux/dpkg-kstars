@@ -748,7 +748,12 @@ void Focus::checkFocuser()
     if (!m_Focuser)
     {
         if (m_FilterManager)
+        {
+            // Add debug for filter offsets bug
             m_FilterManager->setFocusReady(false);
+            qCDebug(KSTARS_EKOS_FOCUS) << QString("%1 m_Focuser=null setting FilterManager m_FocusReady=false")
+                                       .arg(__FUNCTION__);
+        }
         canAbsMove = canRelMove = canTimerMove = false;
         resetButtons();
         setFocusAlgorithm(static_cast<Algorithm> (m_OpsFocusProcess->focusAlgorithm->currentIndex()));
@@ -756,7 +761,14 @@ void Focus::checkFocuser()
     }
 
     if (m_FilterManager)
+    {
+        // Add debug for filter offsets bug
         m_FilterManager->setFocusReady(m_Focuser->isConnected());
+        QString focuser = m_Focuser->getDeviceName();
+        QString wheel = (m_FilterWheel) ? m_FilterWheel->getDeviceName() : QString("No Filter Wheel");
+        qCDebug(KSTARS_EKOS_FOCUS) << QString("%1 Focuser: %2 setting FilterManager m_FocusReady=%3 on wheel %4")
+                                   .arg(__FUNCTION__).arg(focuser).arg(m_Focuser->isConnected()).arg(wheel);
+    }
 
     hasDeviation = m_Focuser->hasDeviation();
 
@@ -2926,7 +2938,7 @@ QString Focus::saveFocusFrame()
         dir.mkpath(path);
 
         // To help identify focus frames add run number, step and frame (for multiple frames at each step)
-        // If FocusAdvisor is manipuling Autofocus then annote frame appropriately
+        // If FocusAdvisor is manipulating Autofocus then annotate frame appropriately
         QString prefix;
         if (focusAdvisor->inFocusAdvisor())
             prefix = focusAdvisor->getFocusFramePrefix();
@@ -5483,7 +5495,7 @@ void Focus::setUseWeights()
 }
 
 // Set the focusDenoise widget based on various other user selected parameters
-// 1. denoise is only availabel for the openCV star measures
+// 1. denoise is only available for the openCV star measures
 // 2. denoise and useWeights are mutually exclusive
 void Focus::setDenoise()
 {
@@ -6050,7 +6062,7 @@ void Focus::processCaptureTimeout()
 
     if (m_abortInProgress)
     {
-        // Timeout occured whilst trying to abort AF. So do no further processing - stop function will call abortExposure()
+        // Timeout occurred whilst trying to abort AF. So do no further processing - stop function will call abortExposure()
         qCDebug(KSTARS_EKOS_FOCUS) << "Abort AF: discarding frame in " << __FUNCTION__;
         return;
     }
@@ -7198,7 +7210,7 @@ void Focus::setFocusAlgorithm(Algorithm algorithm)
                     m_OpsFocusProcess->focusStarMeasure->addItems(m_StarMeasureText);
                     m_OpsFocusProcess->focusStarMeasure->setCurrentIndex(FOCUS_STAR_HFR);
                 }
-                // If we don't have openCV installed grey out the unavailble star measures. As opposed to just
+                // If we don't have openCV installed grey out the unavailable star measures. As opposed to just
                 // hiding these measures, this will remind folks that want to try these that they need to install openCV
 #if !defined(HAVE_OPENCV)
                 QStandardItemModel *model = dynamic_cast<QStandardItemModel *>(m_OpsFocusProcess->focusStarMeasure->model());

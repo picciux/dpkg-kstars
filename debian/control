@@ -11,8 +11,8 @@ Package: kstars
 Architecture: any
 Multi-Arch: foreign
 Depends: ${misc:Depends}, ${shlibs:Depends}, kstars-data
-Recommends: kstars-doc, indi-bin, breeze-icon-theme, xplanet, xplanet-images
-Suggests: khelpcenter, gsc
+Recommends: indi-bin, breeze-icon-theme, xplanet, xplanet-images
+Suggests: khelpcenter
 Description: Free, open source, cross-platform Astronomy Software.
  It provides an accurate graphical simulation of the night sky, from any
  location on Earth, at any date and time. The display includes up to 100
