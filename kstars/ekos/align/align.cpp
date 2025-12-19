@@ -24,6 +24,7 @@
 #include "polaralignmentassistant.h"
 #include "remoteastrometryparser.h"
 #include "manualrotator.h"
+#include "pushtoassistant.h"
 
 // FITS
 #include "fitsviewer/fitsdata.h"
@@ -62,6 +63,7 @@
 #include <basedevice.h>
 #include <indicom.h>
 #include <memory>
+#include <algorithm>
 
 //Qt Includes
 #include <QToolTip>
@@ -186,9 +188,9 @@ Align::Align(const QSharedPointer<ProfileInfo> &activeProfile) : m_ActiveProfile
     m_CaptureTimer.setSingleShot(true);
     m_CaptureTimer.setInterval(CAPTURE_RETRY_DELAY);
     connect(&m_CaptureTimer, &QTimer::timeout, this, &Align::processCaptureTimeout);
-    m_AlignTimer.setSingleShot(true);
-    m_AlignTimer.setInterval(Options::astrometryTimeout() * 1000);
-    connect(&m_AlignTimer, &QTimer::timeout, this, &Ekos::Align::checkAlignmentTimeout);
+    m_RemoteAlignTimer.setSingleShot(true);
+    m_RemoteAlignTimer.setInterval(Options::astrometryTimeout() * 1000);
+    connect(&m_RemoteAlignTimer, &QTimer::timeout, this, &Ekos::Align::checkRemoteAlignmentTimeout);
 
     pi.reset(new QProgressIndicator(this));
     stopLayout->addWidget(pi.get());
@@ -242,9 +244,6 @@ Align::Align(const QSharedPointer<ProfileInfo> &activeProfile) : m_ActiveProfile
     else
         m_StellarSolverProfiles = getDefaultAlignOptionsProfiles();
 
-    m_StellarSolver.reset(new StellarSolver());
-    connect(m_StellarSolver.get(), &StellarSolver::logOutput, this, &Align::appendLogText);
-
     // Initialize dynamic threshold after profiles are loaded
     resetDynamicThreshold();
 
@@ -254,6 +253,7 @@ Align::Align(const QSharedPointer<ProfileInfo> &activeProfile) : m_ActiveProfile
 
 
     setupPolarAlignmentAssistant();
+    setupPushToAssistant();
     setupManualRotator();
     setuptDarkProcessor();
     setupPlot();
@@ -269,9 +269,6 @@ Align::Align(const QSharedPointer<ProfileInfo> &activeProfile) : m_ActiveProfile
 
 Align::~Align()
 {
-    if (m_StellarSolver.get() != nullptr)
-        disconnect(m_StellarSolver.get(), &StellarSolver::logOutput, this, &Align::appendLogText);
-
     if (alignWidget->parent() == nullptr)
         toggleAlignWidgetFullScreen();
 
@@ -354,22 +351,22 @@ void Align::handlePointTooltip(QMouseEvent *event)
                 return;
             QToolTip::showText(event->globalPos(),
                                i18n("<table>"
-                 "<tr>"
-                 "<th colspan=\"2\">Object %1: %2</th>"
-                 "</tr>"
-                 "<tr>"
-                 "<td>RA:</td><td>%3</td>"
-                 "</tr>"
-                 "<tr>"
-                 "<td>DE:</td><td>%4</td>"
-                 "</tr>"
-                 "<tr>"
-                 "<td>dRA:</td><td>%5</td>"
-                 "</tr>"
-                 "<tr>"
-                 "<td>dDE:</td><td>%6</td>"
-                 "</tr>"
-                 "</table>",
+                                    "<tr>"
+                                    "<th colspan=\"2\">Object %1: %2</th>"
+                                    "</tr>"
+                                    "<tr>"
+                                    "<td>RA:</td><td>%3</td>"
+                                    "</tr>"
+                                    "<tr>"
+                                    "<td>DE:</td><td>%4</td>"
+                                    "</tr>"
+                                    "<tr>"
+                                    "<td>dRA:</td><td>%5</td>"
+                                    "</tr>"
+                                    "<tr>"
+                                    "<td>dDE:</td><td>%6</td>"
+                                    "</tr>"
+                                    "</table>",
                                     point + 1,
                                     solutionTable->item(point, 2)->text(),
                                     solutionTable->item(point, 0)->text(),
@@ -551,13 +548,13 @@ bool Align::isParserOK()
     //    return rc;
 }
 
-void Align::checkAlignmentTimeout()
+void Align::checkRemoteAlignmentTimeout()
 {
     if (m_SolveFromFile || ++solverIterations == MAXIMUM_SOLVER_ITERATIONS)
         abort();
     else
     {
-        appendLogText(i18n("Solver timed out."));
+        appendLogText(i18n("Remote solver timed out."));
         parser->stopSolver();
 
         setAlignTableResult(ALIGN_RESULT_FAILED);
@@ -771,6 +768,43 @@ bool Align::setDome(ISD::Dome *device)
     return true;
 }
 
+bool Align::setDustCap(ISD::DustCap *device)
+{
+    if (m_DustCap && m_DustCap == device)
+    {
+        return false;
+    }
+
+    if (m_DustCap)
+    {
+        disconnect(m_DustCap, &ISD::DustCap::newStatus, this, &Ekos::Align::onDustCapStatusChanged);
+    }
+
+    m_DustCap = device;
+
+    if (m_DustCap)
+    {
+        connect(m_DustCap, &ISD::DustCap::newStatus, this, &Ekos::Align::onDustCapStatusChanged, Qt::UniqueConnection);
+    }
+    return true;
+}
+
+void Align::onDustCapStatusChanged(ISD::DustCap::Status status)
+{
+    if (m_waitingForDustCapUnpark && status == ISD::DustCap::CAP_IDLE)
+    {
+        appendLogText(i18n("Dustcap unparked. Resuming capture and solve."));
+        m_waitingForDustCapUnpark = false;
+        captureAndSolve(false); // Resume capture and solve
+    }
+    else if (status == ISD::DustCap::CAP_ERROR)
+    {
+        appendLogText(i18n("Dustcap error detected. Aborting alignment."));
+        m_waitingForDustCapUnpark = false;
+        stop(ALIGN_ABORTED); // Abort alignment
+    }
+}
+
 void Align::removeDevice(const QSharedPointer<ISD::GenericDevice> &device)
 {
     auto name = device->getDeviceName();
@@ -821,6 +855,13 @@ void Align::removeDevice(const QSharedPointer<ISD::GenericDevice> &device)
         QTimer::singleShot(1000, this, &Align::checkFilter);
     }
 
+    // Check DustCap
+    if (m_DustCap && m_DustCap->getDeviceName() == name)
+    {
+        disconnect(m_DustCap, &ISD::DustCap::newStatus, this, &Ekos::Align::onDustCapStatusChanged);
+        m_DustCap = nullptr;
+        appendLogText(i18n("Dustcap device %1 removed.", name));
+    }
 }
 
 bool Align::syncTelescopeInfo()
@@ -1455,7 +1496,7 @@ bool Align::captureAndSolve(bool initialCall)
                                << " DE:" << m_TargetCoord.dec().toDMSString(true);
     qCDebug(KSTARS_EKOS_ALIGN) << "Capture&Solve - Destination RA:" <<  m_DestinationCoord.ra().toHMSString(true)
                                << " DE:" << m_DestinationCoord.dec().toDMSString(true);
-    m_AlignTimer.stop();
+    m_RemoteAlignTimer.stop();
     m_CaptureTimer.stop();
 
     if (m_Camera == nullptr)
@@ -1489,7 +1530,7 @@ bool Align::captureAndSolve(bool initialCall)
 
     if (m_CameraPixelWidth == -1 || m_CameraPixelHeight == -1)
     {
-        KSNotification::error(i18n("CCD pixel size is missing. Please check your driver settings and try again."));
+        KSNotification::error(i18n("Camera pixel size is missing. Please check your driver settings and try again."));
         return false;
     }
 
@@ -1529,6 +1570,25 @@ bool Align::captureAndSolve(bool initialCall)
         }
     }
 
+    // Check dustcap status before proceeding with capture
+    if (m_DustCap && m_DustCap->isParked())
+    {
+        appendLogText(i18n("Dustcap is parked. Unparking before capture and solve..."));
+        m_waitingForDustCapUnpark = true;
+        m_DustCap->unpark();
+        return true; // Wait for onDustCapStatusChanged to resume captureAndSolve
+    }
+    else if (m_DustCap && m_DustCap->isUnParked() == false && m_DustCap->status() != ISD::DustCap::CAP_IDLE)
+    {
+        // If dustcap is not unparked and not in an idle state (e.g., parking, unparking, error)
+        appendLogText(i18n("Dustcap is not ready (status: %1). Waiting before capture and solve...",
+                           ISD::DustCap::getStatusString(m_DustCap->status())));
+        m_waitingForDustCapUnpark = true;
+        // No explicit unpark call here, as it might already be in motion or error.
+        // The onDustCapStatusChanged will eventually trigger CAP_IDLE or CAP_ERROR.
+        return true;
+    }
+
     double seqExpose = alignExposure->value();
 
     auto targetChip = m_Camera->getChip(useGuideHead ? ISD::CameraChip::GUIDE_CCD : ISD::CameraChip::PRIMARY_CCD);
@@ -1543,7 +1603,7 @@ bool Align::captureAndSolve(bool initialCall)
 
     if (targetChip->isCapturing())
     {
-        appendLogText(i18n("Cannot capture while CCD exposure is in progress. Retrying in %1 seconds...",
+        appendLogText(i18n("Cannot capture while camera exposure is in progress. Retrying in %1 seconds...",
                            CAPTURE_RETRY_DELAY / 1000));
         m_CaptureTimer.start(CAPTURE_RETRY_DELAY);
         return true;
@@ -1583,6 +1643,8 @@ bool Align::captureAndSolve(bool initialCall)
             default:
             {
                 TimeOut *= m_CaptureTimeoutCounter; // Extend Timeout in case estimated value is too short
+                // Ensure TimeOut does not exceed 60 seconds (60000 milliseconds)
+                TimeOut = std::min(TimeOut, 60000);
                 m_estimateRotatorTimeFrame = false;
                 appendLogText(i18n("Cannot capture while rotator is busy: Retrying in %1 seconds...", TimeOut / 1000));
                 m_CaptureTimer.start(TimeOut);
@@ -1623,7 +1685,6 @@ bool Align::captureAndSolve(bool initialCall)
             // Enable remote parse
             dynamic_cast<RemoteAstrometryParser *>(remoteParser.get())->setEnabled(true);
             dynamic_cast<RemoteAstrometryParser *>(remoteParser.get())->sendArgs(generateRemoteArgs(QSharedPointer<FITSData>()));
-            solverTimer.start();
         }
     }
 
@@ -1844,7 +1905,8 @@ void Align::setSolverAction(int mode)
 
 void Align::startSolving()
 {
-    //RUN_PAH(syncStage());
+    if (m_Solver.get() && m_Solver->isRunning())
+        m_Solver->abort(true);
 
     // This is needed because they might have directories stored in the config file.
     // So we can't just use the options folder list.
@@ -1859,6 +1921,8 @@ void Align::startSolving()
 
     if (solverModeButtonGroup->checkedId() == SOLVER_LOCAL)
     {
+        QString filenameToUse = "";
+
         if(Options::solverType() != SSolver::SOLVER_ASTAP
                 && Options::solverType() != SSolver::SOLVER_WATNEYASTROMETRY) //You don't need astrometry index files to use ASTAP or Watney
         {
@@ -1886,16 +1950,9 @@ void Align::startSolving()
                 }
             }
         }
-        if (m_StellarSolver->isRunning())
-            m_StellarSolver->abort();
+
         if (!m_ImageData)
             m_ImageData = m_AlignView->imageData();
-        m_StellarSolver->loadNewImageBuffer(m_ImageData->getStatistics(), m_ImageData->getImageBuffer());
-        m_StellarSolver->setProperty("ProcessType", SSolver::SOLVE);
-        m_StellarSolver->setProperty("ExtractorType", Options::solveSextractorType());
-        m_StellarSolver->setProperty("SolverType", Options::solverType());
-        connect(m_StellarSolver.get(), &StellarSolver::ready, this, &Align::solverComplete);
-        m_StellarSolver->setIndexFolderPaths(Options::astrometryIndexFolderList());
 
         SSolver::Parameters params;
         // Get solver parameters
@@ -1915,25 +1972,16 @@ void Align::startSolving()
         // If dynamic threshold is enabled and set to 1, then we use the default conv filter of the solver
         if (m_dynamicThreshold == 1 && Options::astrometryDynamicThreshold())
             params.convFilterType = CONV_DEFAULT;
-        m_StellarSolver->setParameters(params);
 
-        const SSolver::SolverType type = static_cast<SSolver::SolverType>(m_StellarSolver->property("SolverType").toInt());
+        m_Solver.reset(new SolverUtils(params, Options::astrometryTimeout()));
+
+        const SSolver::SolverType type = static_cast<SSolver::SolverType>(Options::solverType());
         if(type == SSolver::SOLVER_LOCALASTROMETRY || type == SSolver::SOLVER_ASTAP || type == SSolver::SOLVER_WATNEYASTROMETRY)
         {
             QString filename = QDir::tempPath() + QString("/solver%1.fits").arg(QUuid::createUuid().toString().remove(
                                    QRegularExpression("[-{}]")));
             m_AlignView->saveImage(filename);
-            m_StellarSolver->setProperty("FileToProcess", filename);
-            ExternalProgramPaths externalPaths;
-            externalPaths.sextractorBinaryPath = Options::sextractorBinary();
-            externalPaths.solverPath = Options::astrometrySolverBinary();
-            externalPaths.astapBinaryPath = Options::aSTAPExecutable();
-            externalPaths.watneyBinaryPath = Options::watneyBinary();
-            externalPaths.wcsPath = Options::astrometryWCSInfo();
-            m_StellarSolver->setExternalFilePaths(externalPaths);
-
-            //No need for a conf file this way.
-            m_StellarSolver->setProperty("AutoGenerateAstroConfig", true);
+            filenameToUse = filename;
         }
 
         if(type == SSolver::SOLVER_ONLINEASTROMETRY )
@@ -1941,10 +1989,7 @@ void Align::startSolving()
             QString filename = QDir::tempPath() + QString("/solver%1.fits").arg(QUuid::createUuid().toString().remove(
                                    QRegularExpression("[-{}]")));
             m_AlignView->saveImage(filename);
-
-            m_StellarSolver->setProperty("FileToProcess", filename);
-            m_StellarSolver->setProperty("AstrometryAPIKey", Options::astrometryAPIKey());
-            m_StellarSolver->setProperty("AstrometryAPIURL", Options::astrometryAPIURL());
+            filenameToUse = filename;
         }
 
         bool useImageScale = Options::astrometryUseImageScale();
@@ -1978,22 +2023,20 @@ void Align::startSolving()
             {
                 m_UsedScale = true;
                 m_ScaleUsed = solution.pixscale;
-                m_StellarSolver->setSearchScale(solution.pixscale * 0.8,
-                                                solution.pixscale * 1.2,
-                                                SSolver::ARCSEC_PER_PIX);
+                m_Solver->useScale(true, solution.pixscale * 0.8, solution.pixscale * 1.2);
             }
             else
-                m_StellarSolver->setProperty("UseScale", false);
+                m_Solver->useScale(false, 0, 0);
 
             if (useImagePosition && solution.ra > 0)
             {
                 m_UsedPosition = true;
                 m_RAUsed = solution.ra;
                 m_DECUsed = solution.dec;
-                m_StellarSolver->setSearchPositionInDegrees(solution.ra, solution.dec);
+                m_Solver->usePosition(true, solution.ra, solution.dec);
             }
             else
-                m_StellarSolver->setProperty("UsePosition", false);
+                m_Solver->usePosition(false, 0, 0);
 
             QVariant value = "";
             if (!m_ImageData->getRecordValue("PIERSIDE", value))
@@ -2018,47 +2061,31 @@ void Align::startSolving()
 
                 SSolver::ScaleUnits units = static_cast<SSolver::ScaleUnits>(Options::astrometryImageScaleUnits());
                 // Extend search scale from 80% to 120%
-                m_StellarSolver->setSearchScale(Options::astrometryImageScaleLow() * 0.8,
-                                                Options::astrometryImageScaleHigh() * 1.2,
-                                                units);
+                m_Solver->useScale(true, Options::astrometryImageScaleLow() * 0.8, Options::astrometryImageScaleHigh() * 1.2, units);
             }
             else
-                m_StellarSolver->setProperty("UseScale", false);
+                m_Solver->useScale(false, 0, 0);
+
             //Setting the initial search location settings
             if(useImagePosition)
             {
-                m_StellarSolver->setSearchPositionInDegrees(m_TelescopeCoord.ra().Degrees(), m_TelescopeCoord.dec().Degrees());
                 m_UsedPosition = true;
                 m_RAUsed = m_TelescopeCoord.ra().Degrees();
                 m_DECUsed = m_TelescopeCoord.dec().Degrees();
+                m_Solver->usePosition(true, m_TelescopeCoord.ra().Degrees(), m_TelescopeCoord.dec().Degrees());
             }
             else
-                m_StellarSolver->setProperty("UsePosition", false);
+                m_Solver->usePosition(false, 0, 0);
         }
 
-        if(Options::alignmentLogging())
-        {
-            // Not trusting SSolver logging right now (Hy Aug 1, 2022)
-            // m_StellarSolver->setLogLevel(static_cast<SSolver::logging_level>(Options::loggerLevel()));
-            // m_StellarSolver->setSSLogLevel(SSolver::LOG_NORMAL);
-            m_StellarSolver->setLogLevel(SSolver::LOG_NONE);
-            m_StellarSolver->setSSLogLevel(SSolver::LOG_OFF);
-            if(Options::astrometryLogToFile())
-            {
-                m_StellarSolver->setProperty("LogToFile", true);
-                m_StellarSolver->setProperty("LogFileName", Options::astrometryLogFilepath());
-            }
-        }
-        else
-        {
-            m_StellarSolver->setLogLevel(SSolver::LOG_NONE);
-            m_StellarSolver->setSSLogLevel(SSolver::LOG_OFF);
-        }
-
-        SolverUtils::patchMultiAlgorithm(m_StellarSolver.get());
+        connect(m_Solver.get(), &SolverUtils::done, this, &Align::solverDone, Qt::UniqueConnection);
 
         // Start solving process
-        m_StellarSolver->start();
+        if (filenameToUse.isEmpty())
+            m_Solver->runSolver(m_ImageData);
+        else
+            m_Solver->runSolver(filenameToUse);
+
     }
     else
     {
@@ -2066,6 +2093,8 @@ void Align::startSolving()
             m_ImageData = m_AlignView->imageData();
         // This should run only for load&slew. For regular solve, we don't get here
         // as the image is read and solved server-side.
+        m_RemoteElapsedTimer.start();
+        m_RemoteAlignTimer.start();
         remoteParser->startSolver(m_ImageData->filename(), generateRemoteArgs(m_ImageData), false);
     }
 
@@ -2081,18 +2110,25 @@ void Align::startSolving()
             syncR->isChecked())
         errOut->clear();
 
-    // Kick off timer
-    solverTimer.start();
-
     setState(ALIGN_PROGRESS);
     emit newStatus(state);
 }
 
-void Align::solverComplete()
+void Align::solverDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds)
 {
-    disconnect(m_StellarSolver.get(), &StellarSolver::ready, this, &Align::solverComplete);
-    if(!m_StellarSolver->solvingDone() || m_StellarSolver->failed())
+    disconnect(m_Solver.get(), &SolverUtils::done, this, &Align::solverDone);
+    if (timedOut || !success)
     {
+        if (elapsedSeconds > 0)
+        {
+            if (timedOut)
+                appendLogText(i18n("Solver timed out after %1 seconds.",
+                                   QString::number(elapsedSeconds, 'f', 2)));
+            else
+                appendLogText(i18n("Solver failed after %1 seconds.",
+                                   QString::number(elapsedSeconds, 'f', 2)));
+        }
+
         if (matchPAHStage(PAA::PAH_FIRST_CAPTURE) ||
                 matchPAHStage(PAA::PAH_SECOND_CAPTURE) ||
                 matchPAHStage(PAA::PAH_THIRD_CAPTURE) ||
@@ -2110,7 +2146,8 @@ void Align::solverComplete()
     }
     else
     {
-        FITSImage::Solution solution = m_StellarSolver->getSolution();
+        if (elapsedSeconds > 0)
+            appendLogText(i18n("Solver completed after %1 seconds.", QString::number(elapsedSeconds, 'f', 2)));
         const bool eastToTheRight = solution.parity == FITSImage::POSITIVE ? false : true;
         solverFinished(solution.orientation, solution.ra, solution.dec, solution.pixscale, eastToTheRight);
     }
@@ -2126,13 +2163,13 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
     sRA          = ra;
     sDEC         = dec;
 
-    double elapsed = solverTimer.elapsed() / 1000.0;
-    if (elapsed > 0)
-        appendLogText(i18n("Solver completed after %1 seconds.", QString::number(elapsed, 'f', 2)));
-
-    m_AlignTimer.stop();
+    m_RemoteAlignTimer.stop();
     if (solverModeButtonGroup->checkedId() == SOLVER_REMOTE && m_RemoteParserDevice && remoteParser.get())
     {
+        const double elapsed = m_RemoteElapsedTimer.elapsed() / 1000.0;
+        if (elapsed > 0)
+            appendLogText(i18n("Remote solver completed after %1 seconds.", QString::number(elapsed, 'f', 2)));
+
         // Disable remote parse
         dynamic_cast<RemoteAstrometryParser *>(remoteParser.get())->setEnabled(false);
     }
@@ -2294,6 +2331,8 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
     {
         {"camera", m_Camera->getDeviceName()},
         {"ra", SolverRAOut->text()},
+        {"ra.Hours", m_AlignCoord.ra().Hours()},
+        {"de.Degrees", m_AlignCoord.dec().Degrees()},
         {"de", SolverDecOut->text()},
         {"dRA", m_TargetDiffRA},
         {"dDE", m_TargetDiffDE},
@@ -2309,7 +2348,9 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
     // Adjust dynamic threshold if enabled
     if (Options::astrometryDynamicThreshold())
     {
-        int numStarsFound = m_StellarSolver->getNumStarsFound();
+        int numStarsFound = m_Solver.get() ? m_Solver->getNumStarsFound() : 0;
+
+        // Should this be done if we get 0 stars??
         auto newThreshold = std::min(std::max(1.0,
                                               numStarsFound < DYNAMIC_THRESHOLD_STARS ? m_dynamicThreshold / 2.0 : m_dynamicThreshold * 2.0),
                                      64.0);
@@ -2321,7 +2362,6 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
                                QString::number(m_dynamicThreshold, 'f', 2), numStarsFound));
         }
     }
-
 
     setState(ALIGN_SUCCESSFUL);
     emit newStatus(state);
@@ -2393,12 +2433,13 @@ void Align::solverFinished(double orientation, double ra, double dec, double pix
     solverFOV->setProperty("visible", true);
 
     if (!matchPAHStage(PAA::PAH_IDLE))
-        m_PolarAlignmentAssistant->processPAHStage(orientation, ra, dec, pixscale, eastToTheRight,
-                m_StellarSolver->getSolutionHealpix(),
-                m_StellarSolver->getSolutionIndexNumber());
+    {
+        int indexUsed, healpixUsed;
+        m_Solver->getSolutionHealpix(&indexUsed, &healpixUsed);
+        m_PolarAlignmentAssistant->processPAHStage(orientation, ra, dec, pixscale, eastToTheRight, indexUsed, healpixUsed);
+    }
     else
     {
-
         if (checkIfRotationRequired())
         {
             solveB->setEnabled(false);
@@ -2447,7 +2488,9 @@ void Align::solverFailed()
     // Adjust dynamic threshold if enabled
     if (Options::astrometryDynamicThreshold())
     {
-        int numStarsFound = m_StellarSolver->getNumStarsFound();
+        int numStarsFound = m_Solver->getNumStarsFound();
+
+        // Should this be done if we get 0 stars??
         auto newThreshold = std::min(std::max(1.0,
                                               numStarsFound < DYNAMIC_THRESHOLD_STARS ? m_dynamicThreshold / 2.0 : m_dynamicThreshold * 2.0),
                                      64.0);
@@ -2507,7 +2550,7 @@ void Align::solverFailed()
     solveB->setEnabled(true);
     loadSlewB->setEnabled(true);
 
-    m_AlignTimer.stop();
+    m_RemoteAlignTimer.stop();
 
     m_SolveFromFile = false;
     solverIterations = 0;
@@ -2607,7 +2650,10 @@ void Align::stop(Ekos::AlignState mode)
 {
     m_CaptureTimer.stop();
     if (solverModeButtonGroup->checkedId() == SOLVER_LOCAL)
-        m_StellarSolver->abort();
+    {
+        if (m_Solver.get())
+            m_Solver->abort();
+    }
     else if (solverModeButtonGroup->checkedId() == SOLVER_REMOTE && remoteParser)
         remoteParser->stopSolver();
     //parser->stopSolver();
@@ -2621,7 +2667,7 @@ void Align::stop(Ekos::AlignState mode)
     m_CaptureErrorCounter = 0;
     m_CaptureTimeoutCounter = 0;
     m_SlewErrorCounter = 0;
-    m_AlignTimer.stop();
+    m_RemoteAlignTimer.stop();
 
     disconnect(m_Camera, &ISD::Camera::newImage, this, &Ekos::Align::processData);
     disconnect(m_Camera, &ISD::Camera::newExposureValue, this, &Ekos::Align::checkCameraExposureProgress);
@@ -2654,11 +2700,7 @@ void Align::stop(Ekos::AlignState mode)
             appendLogText(i18n("Capture aborted."));
         }
         else
-        {
-            double elapsed = solverTimer.elapsed() / 1000.0;
-            if (elapsed > 0)
-                appendLogText(i18n("Solver aborted after %1 seconds.", QString::number(elapsed, 'f', 2)));
-        }
+            appendLogText(i18n("Solver aborted."));
     }
 
     setState(mode);
@@ -2938,7 +2980,7 @@ void Align::updateProperty(INDI::Property prop)
         }
         else if (m_estimateRotatorTimeFrame) // Estimate time frame during first timeout
         {
-            m_RotatorTimeFrame = RotatorUtils::Instance()->calcTimeFrame(RAngle);
+            m_RotatorTimeFrame = std::min(RotatorUtils::Instance()->calcTimeFrame(RAngle), 60);
         }
     }
     else if (prop.isNameMatch("TELESCOPE_MOTION_NS") || prop.isNameMatch("TELESCOPE_MOTION_WE"))
@@ -3556,7 +3598,7 @@ void Align::setAstrometryDevice(const QSharedPointer<ISD::GenericDevice> &device
 void Align::refreshAlignOptions()
 {
     solverFOV->setImageDisplay(Options::astrometrySolverWCS());
-    m_AlignTimer.setInterval(Options::astrometryTimeout() * 1000);
+    m_RemoteAlignTimer.setInterval(Options::astrometryTimeout() * 1000);
     if (m_Rotator)
         m_RotatorControlPanel->updateFlipPolicy(Options::astrometryFlipRotationAllowed());
 }
@@ -4032,7 +4074,7 @@ void Align::exportSolutionPoints()
     {
         int r = KMessageBox::warningContinueCancel(nullptr,
                 i18n("A file named \"%1\" already exists. "
-             "Overwrite it?",
+                     "Overwrite it?",
                      exportFile.fileName()),
                 i18n("Overwrite File?"), KStandardGuiItem::overwrite());
         if (r == KMessageBox::Cancel)
@@ -4101,6 +4143,21 @@ void Align::setupPolarAlignmentAssistant()
     tabWidget->addTab(m_PolarAlignmentAssistant, i18n("Polar Alignment"));
 }
 
+void Align::setupPushToAssistant()
+{
+
+    // push-to assistant
+    PushToAssistant::Instance()->enableSolving(true);
+    connect(this, &Align::newStatus, PushToAssistant::Instance(), &PushToAssistant::setAlignState);
+    connect(this, &Align::newSolution, PushToAssistant::Instance(), &PushToAssistant::updateSolution);
+    connect(PushToAssistant::Instance(), &PushToAssistant::captureAndSolve, [this](bool initialCall)
+    {
+        setSolverAction(GOTO_SYNC);
+        captureAndSolve(initialCall);
+    });
+    connect(PushToAssistant::Instance(), &PushToAssistant::abort, this, &Align::abort);
+}
+
 void Align::setupManualRotator()
 {
     if (m_ManualRotator)
@@ -4150,8 +4207,8 @@ void Align::processPAHStage(int stage)
             // Abort any solver that might be running.
             // Assumes this state change won't happen randomly (e.g. in the middle of align).
             // Alternatively could just let the stellarsolver finish naturally.
-            if (m_StellarSolver && m_StellarSolver->isRunning())
-                m_StellarSolver->abort();
+            if (m_Solver && m_Solver->isRunning())
+                m_Solver->abort();
             break;
         case PAA::PAH_POST_REFRESH:
         {
@@ -4270,6 +4327,9 @@ void Align::refreshOpticalTrain()
 
         auto rotator = OpticalTrainManager::Instance()->getRotator(name);
         setRotator(rotator);
+
+        auto dustcap = OpticalTrainManager::Instance()->getDustCap(name);
+        setDustCap(dustcap);
 
         // Load train settings
         OpticalTrainSettings::Instance()->setOpticalTrainID(id);

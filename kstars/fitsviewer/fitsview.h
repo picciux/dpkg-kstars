@@ -8,6 +8,7 @@
 #pragma once
 
 #include "fitscommon.h"
+#include "fitsstackmonitor.h"
 #include "auxiliary/imagemask.h"
 
 #include <config-kstars.h>
@@ -71,10 +72,10 @@ class FITSView : public QScrollArea
 
         /**
          * @brief Loads a stack of FITS files and displays in a FITSView frame
-         * @param inDir directory of FITS files
+         * @param inDir List of directories of FITS files
          * @param params are the stacking parameters
          */
-        void loadStack(const QString &inDir, const LiveStackData &params);
+        void loadStack(const QStringList &inDir, const LiveStackData &params);
 
         /**
          * @brief User request to cancel stacking operation
@@ -86,6 +87,15 @@ class FITSView : public QScrollArea
          * @param Post Processing Parameters
          */
         void redoPostProcessStack(const LiveStackPPData &ppParams);
+
+        /**
+         * @brief Return a pointer to Stack Monitor
+         * @return pointer
+         */
+        StackMonitor *getStackMon() const
+        {
+            return m_StackMonitor;
+        }
 
         /**
          * @brief loadFITSFromData Takes ownership of the FITSData instance passed in and displays it in a FITSView frame
@@ -413,6 +423,7 @@ class FITSView : public QScrollArea
         void updateFrameLargeImage();
         void updateFrameSmallImage();
         bool drawHFR(QPainter * painter, const QString &hfr, int x, int y);
+        void stackReady(const bool cancelled = false);
 
         QPointer<QLabel> noImageLabel;
         QPixmap noImage;
@@ -479,6 +490,7 @@ class FITSView : public QScrollArea
         QTimer m_UpdateFrameTimer;
 
         QStack<FITSScale> filterStack;
+        QPointer<StackMonitor> m_StackMonitor;
 
         // Tracking box
         bool trackingBoxEnabled { false };

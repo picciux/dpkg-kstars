@@ -14,6 +14,7 @@
 #include "indi/indicamera.h"
 #include "indi/indistd.h"
 #include "indi/indimount.h"
+#include "indi/indidustcap.h"
 #include "skypoint.h"
 
 #include <QTime>
@@ -41,6 +42,7 @@ class FOV;
 class StarObject;
 class ProfileInfo;
 class RotatorSettings;
+class SolverUtils;
 
 namespace Ekos
 {
@@ -227,6 +229,13 @@ class Align : public QWidget, public Ui::Align
              * @return True if added successfully, false if duplicate or failed to add.
              */
         bool setDome(ISD::Dome *device);
+
+        /**
+         * @brief setDustCap Set the dustcap device for the align module.
+         * @param device Pointer to the dustcap device.
+         * @return True if set successfully, false otherwise.
+         */
+        bool setDustCap(ISD::DustCap *device);
 
         /**
              * @brief Add new Rotator
@@ -486,7 +495,7 @@ class Align : public QWidget, public Ui::Align
              */
         void solverFinished(double orientation, double ra, double dec, double pixscale, bool eastToTheRight);
 
-        void solverComplete();
+        void solverDone(bool timedOut, bool success, const FITSImage::Solution &solution, double elapsedSeconds);
 
         /**
              * @brief Process solver failure.
@@ -550,7 +559,7 @@ class Align : public QWidget, public Ui::Align
 
     private slots:
         // Solver timeout
-        void checkAlignmentTimeout();
+        void checkRemoteAlignmentTimeout();
         void setAlignTableResult(AlignResult result);
 
         // External View
@@ -591,6 +600,9 @@ class Align : public QWidget, public Ui::Align
         void refreshAlignOptions();
 
         void processPAHStage(int stage);
+
+    private slots:
+        void onDustCapStatusChanged(ISD::DustCap::Status status); // New slot for dustcap status changes
 
     signals:
         void newLog(const QString &text);
@@ -720,6 +732,11 @@ class Align : public QWidget, public Ui::Align
          */
         void setupPolarAlignmentAssistant();
 
+        /**
+         * @brief setupPushToAssistant initialize the Push-To Assistant
+         */
+        void setupPushToAssistant();
+
         void setupRotatorControl();
 
         /**
@@ -807,11 +824,7 @@ class Align : public QWidget, public Ui::Align
         /// Progress icon if the solver is running
         std::unique_ptr<QProgressIndicator> pi;
 
-        /// Keep track of how long the solver is running
-        QElapsedTimer solverTimer;
-
-        // The StellarSolver
-        std::unique_ptr<StellarSolver> m_StellarSolver;
+        std::unique_ptr<SolverUtils> m_Solver;
         // StellarSolver Profiles
         QList<SSolver::Parameters> m_StellarSolverProfiles;
 
@@ -870,8 +883,9 @@ class Align : public QWidget, public Ui::Align
 
         QString dirPath;
 
-        // Timer
-        QTimer m_AlignTimer;
+        // Other timers
+        QTimer m_RemoteAlignTimer;
+        QElapsedTimer m_RemoteElapsedTimer;
         QTimer m_DebounceTimer;
 
         // Align Frame
@@ -954,6 +968,9 @@ class Align : public QWidget, public Ui::Align
         double m_ScaleUsed = 0;
         double m_RAUsed = 0;
         double m_DECUsed = 0;
+
+        ISD::DustCap *m_DustCap { nullptr };
+        bool m_waitingForDustCapUnpark { false };
 
         double m_dynamicThreshold { 2.0 }; // Initialize with default from parameters.h
 

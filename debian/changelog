@@ -1,3 +1,9 @@
+kstars (5:3.8.0-1) bookworm; urgency=medium
+
+  * Update to KStars 3.8.0. See changelog.gz for details.
+
+ -- Matteo Piscitelli <matteo@matteopiscitelli.it>  Fri, 19 Dec 2025 11:40:00 +0000
+
 kstars (5:3.7.9-1) bookworm; urgency=low
 
   * Update to KStars 3.7.9. See changelog.gz for details.

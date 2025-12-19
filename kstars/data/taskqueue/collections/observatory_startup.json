@@ -1,0 +1,31 @@
+{
+    "name": "Observatory Startup Tasks",
+    "description": "Standard sequence to prepare observatory for observations",
+    "version": "1.0",
+    "tasks": [
+        {
+            "template_id": "dome_unpark",
+            "device": "",
+            "failure_action": 2,
+            "parameters": {
+                "wait_timeout": 120
+            }
+        },
+        {
+            "template_id": "mount_unpark",
+            "device": "",
+            "failure_action": 2,
+            "parameters": {
+                "wait_timeout": 60
+            }
+        },
+        {
+            "template_id": "dustcap_unpark",
+            "device": "",
+            "failure_action": 2,
+            "parameters": {
+                "wait_timeout": 30
+            }
+        }
+    ]
+}

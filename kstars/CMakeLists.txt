@@ -17,9 +17,10 @@ if (NOT ANDROID)
 endif ()
 
 if(MSVC)
-    add_compile_definitions(_USE_MATH_DEFINES=1)
-    add_compile_definitions(NOMINMAX)
-    add_compile_options(/bigobj)
+    add_definitions(-D_USE_MATH_DEFINES=1)
+    add_definitions(-DNOMINMAX)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/bigobj>)
+    add_compile_options($<$<COMPILE_LANGUAGE:C>:/bigobj>)
 endif()
 
 include(CheckCXXSymbolExists)
@@ -103,6 +104,7 @@ if (INDI_FOUND)
         indi/indiadaptiveoptics.cpp
         indi/indicorrelator.cpp
         indi/indispectrograph.cpp
+        indi/indipropertyexporter.cpp
         indi/indidbus.cpp
         indi/opsindi.cpp
         indi/streamwg.cpp
@@ -132,6 +134,7 @@ if (INDI_FOUND)
             ekos/scheduler/opsscriptssettings.ui
             ekos/scheduler/opsoffsetsettings.ui
             ekos/scheduler/opsjobssettings.ui
+            ekos/scheduler/opsweathersettings.ui
             # Capture
             ekos/capture/capture.ui
             ekos/capture/camera.ui
@@ -163,6 +166,7 @@ if (INDI_FOUND)
             ekos/align/mountmodel.ui
             ekos/align/polaralignmentassistant.ui
             ekos/align/polaralignwidget.ui
+	    ekos/align/pushtoassistant.ui
             #ekos/align/opsastap.ui
             # Focus
             ekos/focus/focus.ui
@@ -290,6 +294,7 @@ if (INDI_FOUND)
             ekos/scheduler/scheduler.cpp
             ekos/scheduler/schedulermodulestate.cpp
             ekos/scheduler/schedulerprocess.cpp
+            ekos/scheduler/schedulersafetymonitor.cpp
             ekos/scheduler/schedulerutils.cpp
             ekos/scheduler/schedulertypes.cpp
             ekos/scheduler/framingassistantui.cpp
@@ -297,9 +302,30 @@ if (INDI_FOUND)
             ekos/scheduler/scheduleraltitudegraph.cpp
             ekos/scheduler/opsalignmentsettings.cpp
             ekos/scheduler/opsscriptssettings.cpp
+            ekos/scheduler/opsweathersettings.cpp
             ekos/scheduler/opsjobssettings.cpp
             ekos/scheduler/opsoffsetsettings.cpp
             ekos/scheduler/schedulersettings.cpp
+            # Task Queue System
+            ekos/scheduler/taskqueue/tasktemplate.cpp
+            ekos/scheduler/taskqueue/task.cpp
+            ekos/scheduler/taskqueue/templatemanager.cpp
+            ekos/scheduler/taskqueue/queue/queueitem.cpp
+            ekos/scheduler/taskqueue/queue/queuemanager.cpp
+            ekos/scheduler/taskqueue/queue/queueexecutor.cpp
+            ekos/scheduler/taskqueue/actions/taskaction.cpp
+            ekos/scheduler/taskqueue/actions/setaction.cpp
+            ekos/scheduler/taskqueue/actions/evaluateaction.cpp
+            ekos/scheduler/taskqueue/actions/delayaction.cpp
+            ekos/scheduler/taskqueue/actions/startaction.cpp
+            ekos/scheduler/taskqueue/actions/scriptaction.cpp
+            ekos/scheduler/taskqueue/indi/indipropertyaccess.cpp
+            ekos/scheduler/taskqueue/ui/queueviewerwidget.cpp
+            ekos/scheduler/taskqueue/ui/collectionsdialog.cpp
+            ekos/scheduler/taskqueue/ui/deviceselectiondialog.cpp
+            ekos/scheduler/taskqueue/ui/parametercustomizationdialog.cpp
+            ekos/scheduler/taskqueue/ui/propertytemplatebuilder.cpp
+            ekos/scheduler/taskqueue/ui/templatelibrarywidget.cpp
 
             # Focus
             ekos/focus/focus.cpp
@@ -331,6 +357,7 @@ if (INDI_FOUND)
 
             # Align
             ekos/align/align.cpp
+            ekos/align/alignmentplot.cpp
             ekos/align/alignview.cpp
             ekos/align/astrometryparser.cpp
             ekos/align/opsastrometry.cpp
@@ -345,6 +372,7 @@ if (INDI_FOUND)
             ekos/align/polaralignmentassistant.cpp
             ekos/align/manualrotator.cpp
             ekos/align/polaralignwidget.cpp
+	    ekos/align/pushtoassistant.cpp
 
             # Guide
             ekos/guide/guide.cpp
@@ -437,6 +465,7 @@ if (CFITSIO_FOUND)
         fitsviewer/opsfits.cpp
         fitsviewer/fitsdirwatcher.cpp
         fitsviewer/fitsmemmonitor.cpp
+        fitsviewer/fitsstackmonitor.cpp
         )
 
     if (Qt5DataVisualization_FOUND OR Qt6DataVisualization_FOUND)
@@ -471,6 +500,7 @@ if (CFITSIO_FOUND)
         fitsviewer/statform.ui
         fitsviewer/platesolve.ui
         fitsviewer/livestacking.ui
+        fitsviewer/livestackmonitor.ui
         fitsviewer/catalogobject.ui
         fitsviewer/catalogobjecttypefilter.ui
         fitsviewer/fitsdebayer.ui
@@ -929,6 +959,7 @@ set(kstars_extra_SRCS
     auxiliary/colorscheme.cpp
     auxiliary/dms.cpp
     auxiliary/cachingdms.cpp
+    auxiliary/flashingtextitem.cpp
     auxiliary/geolocation.cpp
     auxiliary/ksfilereader.cpp
     auxiliary/ksuserdb.cpp
