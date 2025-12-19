@@ -49,6 +49,7 @@
 #include "mosaictiles.h"
 #include "mount/meridianflipstatuswidget.h"
 #include "ekos/auxiliary/rotatorutils.h"
+#include "ekos/align/pushtoassistant.h"
 
 #include "ekoslive/ekosliveclient.h"
 #include "ekoslive/message.h"
@@ -89,6 +90,7 @@ void Manager::release()
     OpticalTrainManager::release();
     OpticalTrainSettings::release();
     RotatorUtils::release();
+    PushToAssistant::release();
     delete _Manager;
 }
 
@@ -754,6 +756,7 @@ void Manager::reset()
 
     m_DriverDevicesCount = 0;
     m_syncedDevices.clear();
+    m_ProfileManagedDevices.clear();
 
     removeTabs();
 
@@ -1488,8 +1491,16 @@ void Manager::disconnectDevices()
 {
     for (auto &device : INDIListener::devices())
     {
-        qCDebug(KSTARS_EKOS) << "Disconnecting " << device->getDeviceName();
-        device->Disconnect();
+        // Only disconnect devices that were started by this profile
+        if (m_ProfileManagedDevices.contains(device->getDeviceName()))
+        {
+            qCDebug(KSTARS_EKOS) << "Disconnecting " << device->getDeviceName();
+            device->Disconnect();
+        }
+        else
+        {
+            qCDebug(KSTARS_EKOS) << "Skipping disconnect for non-managed device: " << device->getDeviceName();
+        }
     }
 
     appendLogText(i18n("Disconnecting INDI devices..."));
@@ -1504,6 +1515,7 @@ void Manager::cleanDevices(bool stopDrivers)
         mountModule()->stopTimers();
 
     ekosLiveClient->message()->setPendingPropertiesEnabled(false);
+
     INDIListener::Instance()->disconnect(this);
     DriverManager::Instance()->disconnect(this);
 
@@ -1537,6 +1549,9 @@ void Manager::cleanDevices(bool stopDrivers)
 void Manager::processNewDevice(const QSharedPointer<ISD::GenericDevice> &device)
 {
     qCInfo(KSTARS_EKOS) << "Ekos received a new device: " << device->getDeviceName();
+
+    // Track this device as managed by the current profile
+    m_ProfileManagedDevices.insert(device->getDeviceName());
 
     Ekos::CommunicationStatus previousStatus = m_indiStatus;
 
@@ -1591,7 +1606,11 @@ void Manager::processNewDevice(const QSharedPointer<ISD::GenericDevice> &device)
         if (m_LocalMode == false && m_DriverDevicesCount == 0)
         {
             if (m_CurrentProfile->autoConnect)
+            {
+                connectB->setEnabled(false);
+                disconnectB->setEnabled(true);
                 appendLogText(i18n("Remote devices established."));
+            }
             else
                 appendLogText(i18n("Remote devices established. Please connect devices."));
         }
@@ -2154,7 +2173,7 @@ void Manager::initCapture()
 
     capturePreview->shareCaptureModule(captureModule());
     int index = addModuleTab(EkosModule::Capture, captureModule(), QIcon(":/icons/ekos_ccd.png"));
-    toolsWidget->tabBar()->setTabToolTip(index, i18nc("Charge-Coupled Device", "CCD"));
+    toolsWidget->tabBar()->setTabToolTip(index, i18n("Camera"));
     if (Options::ekosLeftIcons())
     {
         QTransform trans;
@@ -3804,7 +3823,7 @@ void Manager::createRotatorController(ISD::Rotator *device)
     auto Name = device->getDeviceName();
     if (m_RotatorControllers.contains(Name) == false)
     {
-        QSharedPointer<RotatorSettings> newRC(new RotatorSettings(this));
+        QSharedPointer<RotatorSettings> newRC(new RotatorSettings(nullptr));
         // Properties are fetched in RotatorSettings::initRotator!
         m_RotatorControllers[Name] = newRC;
     }

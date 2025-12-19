@@ -34,6 +34,7 @@
 #include "ekos/auxiliary/opticaltrainsettings.h"
 #include "ekos/manager/meridianflipstate.h"
 #include "ekos/align/polaralignmentassistant.h"
+#include "ekos/align/pushtoassistant.h"
 
 #include "kstars.h"
 #include "skymapcomposite.h"
@@ -163,10 +164,23 @@ Mount::Mount()
 
     // forward J2000 selection to the target widget, which does not have its own selection
     connect(mountPosition, &MountPositionWidget::J2000Enabled, mountTarget, &MountTargetWidget::setJ2000Enabled);
+    // Synchronize J2000/JNow toggle with Mount Control Panel
+    connect(mountPosition, &MountPositionWidget::J2000Enabled, m_ControlPanel.get(), &MountControlPanel::setJ2000Enabled);
+    connect(m_ControlPanel->mountPosition, &MountPositionWidget::J2000Enabled, mountPosition,
+            &MountPositionWidget::setJ2000Enabled);
 
     // forward target commands
     connect(mountTarget, &MountTargetWidget::slew, this, &Mount::slew);
     connect(mountTarget, &MountTargetWidget::sync, this, &Mount::sync);
+
+    // connect to push-to assistant
+    connect(PushToAssistant::Instance(), &PushToAssistant::sync, this, &Mount::sync);
+    connect(this, &Mount::newTarget, [](SkyPoint & position)
+    {
+        PushToAssistant::Instance()->setTargetPosition(new SkyPoint(position));
+    });
+    connect(this, &Mount::newTargetName, PushToAssistant::Instance(), &PushToAssistant::setTargetName);
+    PushToAssistant::Instance()->enableMountPosition(true);
 
     //Note:  This is to prevent a button from being called the default button
     //and then executing when the user hits the enter key such as when on a Text Box
@@ -530,6 +544,7 @@ void Mount::updateTelescopeCoords(const SkyPoint &position, ISD::Mount::PierSide
     // forward the position to the position widget and control panel
     mountPosition->updateTelescopeCoords(position, ha);
     m_ControlPanel->mountPosition->updateTelescopeCoords(position, ha);
+    PushToAssistant::Instance()->updateTelescopeCoords(position);
 
     double currentAlt = telescopeCoord.altRefracted().Degrees();
 
@@ -926,6 +941,7 @@ void Mount::setJ2000Enabled(bool enabled)
 {
     m_ControlPanel->setJ2000Enabled(enabled);
     mountPosition->setJ2000Enabled(enabled);
+    PushToAssistant::Instance()->setJ2000Enabled(enabled);
 }
 
 bool Mount::gotoTarget(const QString &target)
@@ -950,6 +966,7 @@ void Mount::setTargetName(const QString &name)
 {
     mountTarget->setTargetName(name);
     m_ControlPanel->setTargetName(name);
+    PushToAssistant::Instance()->setTargetName(name);
 }
 
 bool Mount::syncTarget(const QString &target)
@@ -980,8 +997,9 @@ bool Mount::slew(double RA, double DEC)
     mf_state->setTargetPosition(targetPosition);
     mf_state->resetMeridianFlip();
 
-    m_ControlPanel->setTargetPosition(new SkyPoint(RA, DEC));
-    mountTarget->setTargetPosition(new SkyPoint(RA, DEC));
+    m_ControlPanel->setTargetPosition(targetPosition);
+    mountTarget->setTargetPosition(targetPosition);
+    PushToAssistant::Instance()->setTargetPosition(targetPosition);
 
     qCDebug(KSTARS_EKOS_MOUNT) << "Slewing to RA=" <<
                                targetPosition->ra().toHMSString() <<

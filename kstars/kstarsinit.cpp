@@ -161,8 +161,8 @@ void KStars::initActions()
 
 #if defined(HAVE_WCSLIB) && defined(HAVE_OPENCV)
     actionCollection()->addAction("live_stacker", this, SLOT(slotStack()))
-        << i18n("Live Stacker...") << QIcon::fromTheme("folder-open")
-        << QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K);
+            << i18n("Live Stacker...") << QIcon::fromTheme("folder-open")
+            << QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K);
 #endif
 
 #endif
@@ -483,6 +483,10 @@ void KStars::initActions()
 #ifdef HAVE_INDI
     ka = actionCollection()->addAction("ekos", this, SLOT(slotEkos()))
          << i18n("Ekos") << QKeySequence(Qt::CTRL | Qt::Key_K);
+    ka->setShortcutContext(Qt::ApplicationShortcut);
+
+    ka = actionCollection()->addAction("pushToAssistant", this,
+                                       SLOT(slotPushToAssistant())) << i18n("Push-To Assistant") << QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G);
     ka->setShortcutContext(Qt::ApplicationShortcut);
 #endif
 
@@ -840,7 +844,7 @@ void KStars::repopulateFOV()
     fovActionMenu->menu()->clear();
     foreach (FOV *fov, data()->availFOVs)
     {
-        KToggleAction *kta = actionCollection()->add<KToggleAction>(fov->name());
+        KToggleAction *kta = actionCollection()->add<KToggleAction>("fov:" + fov->name());
         kta->setText(fov->name());
         if (Options::fOVNames().contains(fov->name()))
         {
@@ -866,7 +870,7 @@ void KStars::repopulateHIPS()
     for (auto &action : actions)
         hipsGroup->removeAction(action);
 
-    auto ka = actionCollection()->addAction(i18n("None"), this, SLOT(slotHIPSSource()))
+    auto ka = actionCollection()->addAction("hips:off", this, SLOT(slotHIPSSource()))
               << i18n("None") << AddToGroup(hipsGroup)
               << Checked(Options::hIPSSource() == "None");
 
@@ -877,7 +881,7 @@ void KStars::repopulateHIPS()
     {
         QString title = source.value("obs_title");
 
-        auto newAction = actionCollection()->addAction(title, this, SLOT(slotHIPSSource()))
+        auto newAction = actionCollection()->addAction("hips:" + title, this, SLOT(slotHIPSSource()))
                          << title << AddToGroup(hipsGroup)
                          << Checked(Options::hIPSSource() == title);
 

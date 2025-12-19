@@ -418,12 +418,21 @@ void FITSView::initStack()
         filterStack.push(filter);
 
     m_ImageData.reset(new FITSData(mode), &QObject::deleteLater);
+    // Start the Stack Monitor - parenting it to the top level window
+    QWidget *topLevelWindow = this->window();
+    m_StackMonitor = new StackMonitor(topLevelWindow);
+    // Connect to auto-clear the pointer when the window closes
+    connect(m_StackMonitor, &QObject::destroyed, this, [this]()
+    {
+        m_StackMonitor = nullptr;
+    });
+    m_StackMonitor->hide();
 
     QString noImage = ":/images/noimage.png";
     fitsWatcher.setFuture(m_ImageData->loadFromFile(noImage));
 }
 
-void FITSView::loadStack(const QString &inDir, const LiveStackData &params)
+void FITSView::loadStack(const QStringList &inDir, const LiveStackData &params)
 {
 #if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
     if (floatingToolBar != nullptr)
@@ -444,6 +453,10 @@ void FITSView::loadStack(const QString &inDir, const LiveStackData &params)
 
     m_ImageData.reset(new FITSData(mode), &QObject::deleteLater);
 
+    // Reset the stack monitor
+    if (m_StackMonitor)
+        m_StackMonitor->clear();
+
     if (setBayerParams)
         m_ImageData->setBayerParams(&param);
 
@@ -463,28 +476,26 @@ void FITSView::loadStack(const QString &inDir, const LiveStackData &params)
         emit stackInProgress();
     });
 
-    connect(m_ImageData.data(), &FITSData::stackReady, this, [this](const bool cancelled)
-    {
-        // Don't reload image if we are cancelling
-        if (!cancelled)
-        {
-            auto stack = m_ImageData->stack();
-            if(stack && !stack->isStackedImageEmpty())
-            {
-                emit updateStackSNR(m_ImageData->stack()->getStackSNR());
-                fitsWatcher.setFuture(m_ImageData->loadStackBuffer());
-            }
-            else
-                fitsWatcher.setFuture(m_ImageData->loadFromFile(":/images/noimage.png"));
-        }
-        emit resetStack(cancelled);
-    });
+    connect(m_ImageData.data(), &FITSData::stackReady, this, &FITSView::stackReady);
 
     connect(m_ImageData.data(), &FITSData::stackUpdateStats, this, [this](const bool ok, const int sub,
             const int total, const double meanSNR, const double minSNR, const double maxSNR)
     {
         emit stackUpdateStats(ok, sub, total, meanSNR, minSNR, maxSNR);
     });
+
+    // Register the metatypes for use in signals to Stack Monitor
+    qRegisterMetaType<QVector<QString>>();
+    qRegisterMetaType<QVector<LiveStackStageInfo>>("QVector<LiveStackStageInfo>");
+    qRegisterMetaType<QVector<LiveStackFile>>("QVector<LiveStackFile>");
+
+    // Stack Monitor signals
+    connect(m_ImageData.data(), &FITSData::initStackMon, m_StackMonitor, &StackMonitor::initialize);
+    connect(m_ImageData.data(), &FITSData::addStackMon, m_StackMonitor, &StackMonitor::addSubs);
+    connect(m_ImageData.data(), &FITSData::updateStackMon, m_StackMonitor, &StackMonitor::updateSubs);
+
+    QString noImage = ":/images/noimage.png";
+    fitsWatcher.setFuture(m_ImageData->loadFromFile(noImage));
 
     m_ImageData->loadStack(inDir, params);
 #else
@@ -498,20 +509,30 @@ void FITSView::cancelStack()
     m_ImageData->cancelStack();
 #endif // !KSTARS_LITE, HAVE_WCSLIB, HAVE_OPENCV
 }
-// Called when post processing controls in Fitstab changed by the user
+
+// Called when post processing controls in Fitstab changed by the user.
 void FITSView::redoPostProcessStack(const LiveStackPPData &ppParams)
 {
-#if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
-    auto stack = m_ImageData->stack();
-    if (stack)
+#if !defined(KSTARS_LITE) && defined(HAVE_WCSLIB) && defined(HAVE_OPENCV)
+    if (m_ImageData)
+        m_ImageData->redoPostProcessStack(ppParams);
+#endif
+}
+
+void FITSView::stackReady(const bool cancelled)
+{
+    // Don't reload image if we are cancelling
+    if (!cancelled)
     {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        QFuture<void> future = QtConcurrent::run(&FITSStack::redoPostProcessStack, stack.get(), ppParams);
-#else
-        QFuture<void> future = QtConcurrent::run(stack.get(), &FITSStack::redoPostProcessStack, ppParams);
-#endif
+        if(m_ImageData->isStackedImageEmpty())
+            fitsWatcher.setFuture(m_ImageData->loadFromFile(":/images/noimage.png"));
+        else
+        {
+            emit updateStackSNR(m_ImageData->getStackSNR());
+            fitsWatcher.setFuture(m_ImageData->loadStackBuffer());
+        }
     }
-#endif
+    emit resetStack(cancelled);
 }
 
 void FITSView::clearData()
@@ -734,7 +755,7 @@ void FITSView::loadInFrame()
 
     // If stack has just been processed, plate solve and check for more subs...
 #if !defined (KSTARS_LITE) && defined (HAVE_WCSLIB) && defined (HAVE_OPENCV)
-    if (mode == FITS_LIVESTACKING && m_ImageData->stack())
+    if (mode == FITS_LIVESTACKING && !m_ImageData.isNull())
         m_ImageData->incrementalStack();
 #endif
 }

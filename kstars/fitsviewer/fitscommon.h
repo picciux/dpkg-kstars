@@ -7,6 +7,9 @@
 #pragma once
 
 #include <QString>
+#include <QDateTime>
+#include <QVariantMap>
+#include <QMetaEnum>
 #include "dms.h"
 
 #include <ki18n_version.h>
@@ -80,7 +83,7 @@ static const QString CatTypeStr[CAT_MAX_REASONS] =
 static constexpr double CAT_OBJ_BOX_SIZE = 10.0;
 
 // Structure to hold catalog object data information
-typedef struct
+struct CatObject
 {
     int num;
     CatType catType;
@@ -96,7 +99,7 @@ typedef struct
     double y;
     bool highlight;
     bool show;
-} CatObject;
+};
 
 // Simbad catalog object type structure
 struct CatObjType
@@ -306,12 +309,67 @@ static CatObjType catObjTypes[MAX_CAT_OBJ_TYPES] =
 };
 
 // Live Stacking
-typedef enum { LS_ALIGNMENT_PLATE_SOLVE, LS_ALIGNMENT_NONE } LiveStackAlignMethod;
-typedef enum { LS_DOWNSCALE_NONE, LS_DOWNSCALE_2X, LS_DOWNSCALE_3X, LS_DOWNSCALE_4X } LiveStackDownscale;
-typedef enum { LS_STACKING_EQUAL, LS_STACKING_HFR, LS_STACKING_NUM_STARS } LiveStackFrameWeighting;
-typedef enum { LS_STACKING_REJ_NONE, LS_STACKING_REJ_SIGMA, LS_STACKING_REJ_WINDSOR } LiveStackRejection;
+enum class LiveStackAlignMethod { PLATE_SOLVE, NONE };
+static const QMap<LiveStackAlignMethod, QString> LiveStackAlignMethodNames
+{
+    { LiveStackAlignMethod::PLATE_SOLVE, "Plate Solve" },
+    { LiveStackAlignMethod::NONE, "None" }
+};
 
-typedef struct
+enum class LiveStackDownscale { NONE, X2, X3, X4 };
+static const QMap<LiveStackDownscale, QString> LiveStackDownscaleNames
+{
+    { LiveStackDownscale::NONE, "None" },
+    { LiveStackDownscale::X2, "2×" },
+    { LiveStackDownscale::X3, "3×" },
+    { LiveStackDownscale::X4, "4×" }
+};
+
+enum class LiveStackFrameWeighting { EQUAL, HFR, NUM_STARS };
+static const QMap<LiveStackFrameWeighting, QString> LiveStackFrameWeightingNames
+{
+    { LiveStackFrameWeighting::EQUAL, "Equal" },
+    { LiveStackFrameWeighting::HFR, "HFR" },
+    { LiveStackFrameWeighting::NUM_STARS, "Num Stars" }
+};
+
+enum class LiveStackStackingMethod { MEAN, SIGMA, WINDSOR, IMAGEMM };
+static const QMap<LiveStackStackingMethod, QString> LiveStackStackingMethodNames
+{
+    { LiveStackStackingMethod::MEAN, "Mean" },
+    { LiveStackStackingMethod::SIGMA, "Sigma Clipping" },
+    { LiveStackStackingMethod::WINDSOR, "Windsorization" },
+    { LiveStackStackingMethod::IMAGEMM, "ImageMM" }
+    };
+
+enum class LiveStackChannel{ SINGLE, RED, GREEN, BLUE, LUM, NONE };
+static const QMap<LiveStackChannel, QString> LiveStackChannelNames
+{
+    { LiveStackChannel::SINGLE, "Single" },
+    { LiveStackChannel::RED, "Red" },
+    { LiveStackChannel::GREEN, "Green" },
+    { LiveStackChannel::BLUE, "Blue" },
+    { LiveStackChannel::LUM, "Lum" },
+    { LiveStackChannel::NONE, "None" }
+};
+
+// Helper to convert a vector of channel enums to a comma-separated QString
+inline QString vectorChannelToString(const QVector<LiveStackChannel> &vec)
+{
+    QStringList list;
+    for (auto ch : vec)
+        list << LiveStackChannelNames.value(ch);
+    return list.join(", ");
+}
+struct LiveStackFile
+{
+    QString file;
+    int ID = -1;
+    LiveStackChannel baseChannel = LiveStackChannel::NONE;
+    QVector<LiveStackChannel> channels;
+};
+
+struct LiveStackPPData
 {
     bool postProcess;
     double deconvAmt;
@@ -320,20 +378,70 @@ typedef struct
     double sharpenAmt;
     int sharpenKernal;
     double sharpenSigma;
-} LiveStackPPData;
+};
 
-typedef struct
+struct LiveStackData
 {
-    QString masterDark;
-    QString masterFlat;
+    bool calcSNR;
+    QVector<QString> masterDark;
+    QVector<QString> masterFlat;
     QString alignMaster;
     LiveStackAlignMethod alignMethod;
     int numInMem;
     LiveStackDownscale downscale;
     LiveStackFrameWeighting weighting;
-    LiveStackRejection rejection;
+    LiveStackStackingMethod stackingMethod;
     double lowSigma;
     double highSigma;
     double windsorCutoff;
+    int iterations;
+    double kappa;
+    double alpha;
+    double sigma;
+    int PSFUpdate;
     LiveStackPPData postProcessing;
-} LiveStackData;
+};
+
+enum class LSStage
+{
+    Start,         // File detected
+    WaitLoad,      // Wait to start loading sub
+    Loaded,        // File loaded into memory
+    PlateSolved,   // Plate solving completed
+    WaitStack,     // Wait for more subs for stacking to begin
+    Calibrated,    // Calibration completed
+    Aligned,       // Alignment completed
+    Stacked,       // Subframe stacked
+    Failed         // Terminal failure at any stage
+};
+
+enum class LSStatus
+{
+    LSStatusUninit, // Uninitiated
+    LSStatusOK,     // Status = good
+    LSStatusNA,     // Status = not applicable
+    LSStatusError   // Status = Error
+};
+
+struct LiveStackStageInfo
+{
+    int id;                // Unique subframe ID (e.g. filename or generated UID)
+    LSStage stage;         // Processing stage
+    QDateTime timestamp;   // When the stage completed
+    LSStatus status;       // Status
+    QVariantMap extraData; // Any relevant extra data
+
+    static LiveStackStageInfo fromNow(const int &id, const LSStage &stage, const LSStatus &status,
+                                      const QVariantMap &extra = {})
+    {
+        LiveStackStageInfo info;
+        info.id = id;
+        info.stage = stage;
+        info.timestamp = QDateTime::currentDateTime();
+        info.status = status;
+        info.extraData = extra;
+        return info;
+    }
+};
+
+Q_DECLARE_METATYPE(LiveStackStageInfo)

@@ -393,6 +393,27 @@ bool KSUserDB::Initialize()
         if (!ok)
             qCWarning(KSTARS) << query.lastError();
     }
+
+    // Add opticaltraindevices table
+    if (currentDBVersion < 316)
+    {
+        QSqlQuery query(db);
+        if (!query.exec("CREATE TABLE opticaltraindevices ( "
+                        "id INTEGER DEFAULT NULL PRIMARY KEY AUTOINCREMENT, "
+                        "opticaltrain INTEGER DEFAULT NULL, "
+                        "devices TEXT DEFAULT NULL)"))
+            qCWarning(KSTARS) << query.lastError();
+    }
+
+    // Add driversource to profile table
+    if (currentDBVersion < 317)
+    {
+        QSqlQuery query(db);
+        QString columnQuery = QString("ALTER TABLE profile ADD COLUMN driversource TEXT DEFAULT 'system'");
+        if (!query.exec(columnQuery))
+            qCWarning(KSTARS) << query.lastError();
+    }
+
     return true;
 }
 
@@ -525,7 +546,7 @@ bool KSUserDB::RebuildDB()
                   "TEXT, port INTEGER, city TEXT, province TEXT, country TEXT, indiwebmanagerport INTEGER DEFAULT "
                   "NULL, autoconnect INTEGER DEFAULT 1, guidertype INTEGER DEFAULT 0, guiderhost TEXT, guiderport INTEGER,"
                   "indihub INTEGER DEFAULT 0, portselector INTEGER DEFAULT 1, remotedrivers TEXT DEFAULT NULL, "
-                  "scripts TEXT DEFAULT NULL)");
+                  "scripts TEXT DEFAULT NULL, driversource TEXT DEFAULT 'system')");
 
 #ifdef Q_OS_WIN
     tables.append("INSERT INTO profile (name, host, port) VALUES ('Simulators', 'localhost', 7624)");
@@ -552,6 +573,11 @@ bool KSUserDB::RebuildDB()
 
     tables.append("CREATE TABLE opticaltrainsettings (id INTEGER DEFAULT NULL PRIMARY KEY AUTOINCREMENT, "
                   "opticaltrain INTEGER DEFAULT NULL, settings TEXT DEFAULT NULL)");
+
+    tables.append("CREATE TABLE opticaltraindevices ( "
+                  "id INTEGER DEFAULT NULL PRIMARY KEY AUTOINCREMENT, "
+                  "opticaltrain INTEGER DEFAULT NULL, "
+                  "devices TEXT DEFAULT NULL)");
 
     tables.append("CREATE TABLE IF NOT EXISTS darkframe (id INTEGER DEFAULT NULL PRIMARY KEY AUTOINCREMENT, ccd TEXT "
                   "NOT NULL, chip INTEGER DEFAULT 0, binX INTEGER, binY INTEGER, temperature REAL, gain INTEGER DEFAULT -1, "
@@ -1110,6 +1136,84 @@ bool KSUserDB::GetOpticalTrains(uint32_t profileID, QList<QVariantMap> &opticalT
     }
 
     return true;
+}
+
+bool KSUserDB::AddOpticalTrainDevices(uint32_t opticaltrainID, const QJsonArray &devicesJson)
+{
+    auto db = QSqlDatabase::database(m_ConnectionName);
+    if (!db.isValid())
+    {
+        qCCritical(KSTARS) << "Failed to open database:" << db.lastError();
+        return false;
+    }
+
+    QSqlTableModel opticalTrainDevices(nullptr, db);
+    opticalTrainDevices.setTable("opticaltraindevices");
+    opticalTrainDevices.setFilter(QString("opticaltrain=%1").arg(opticaltrainID));
+    opticalTrainDevices.select();
+
+    QSqlRecord record = opticalTrainDevices.record();
+
+    // If a record for this optical train already exists, update it. Otherwise, insert a new one.
+    if (opticalTrainDevices.rowCount() > 0)
+    {
+        record = opticalTrainDevices.record(0);
+        record.setValue("devices", QJsonDocument(devicesJson).toJson(QJsonDocument::Compact));
+        opticalTrainDevices.setRecord(0, record);
+    }
+    else
+    {
+        // Remove PK so that it gets auto-incremented later
+        record.remove(0);
+        record.setValue("opticaltrain", opticaltrainID);
+        record.setValue("devices", QJsonDocument(devicesJson).toJson(QJsonDocument::Compact));
+        opticalTrainDevices.insertRecord(-1, record);
+    }
+
+    if (!opticalTrainDevices.submitAll())
+    {
+        qCWarning(KSTARS) << opticalTrainDevices.lastError();
+        return false;
+    }
+
+    return true;
+}
+
+bool KSUserDB::GetOpticalTrainDevices(uint32_t opticaltrainID, QJsonArray &devicesJson)
+{
+    auto db = QSqlDatabase::database(m_ConnectionName);
+    if (!db.isValid())
+    {
+        qCCritical(KSTARS) << "Failed to open database:" << db.lastError();
+        return false;
+    }
+
+    devicesJson = QJsonArray(); // Clear existing content
+
+    QSqlTableModel opticalTrainDevices(nullptr, db);
+    opticalTrainDevices.setTable("opticaltraindevices");
+    opticalTrainDevices.setFilter(QString("opticaltrain=%1").arg(opticaltrainID));
+    opticalTrainDevices.select();
+
+    if (opticalTrainDevices.rowCount() > 0)
+    {
+        QSqlRecord record = opticalTrainDevices.record(0);
+        auto devicesField = record.value("devices").toByteArray();
+        QJsonParseError parserError;
+        QJsonDocument doc = QJsonDocument::fromJson(devicesField, &parserError);
+        if (parserError.error == QJsonParseError::NoError && doc.isArray())
+        {
+            devicesJson = doc.array();
+            return true;
+        }
+        else
+        {
+            qCWarning(KSTARS) << "Failed to parse INDI device JSON for optical train" << opticaltrainID << ":" <<
+                              parserError.errorString();
+        }
+    }
+
+    return false;
 }
 
 /* Driver Alias Section */
@@ -2932,6 +3036,10 @@ bool KSUserDB::SaveProfile(const QSharedPointer<ProfileInfo> &pi)
                         pi->id)))
         qCWarning(KSTARS) << query.executedQuery() << query.lastError().text();
 
+    // Update driver source
+    if (!query.exec(QString("UPDATE profile SET driversource='%1' WHERE id=%2").arg(pi->driverSource).arg(pi->id)))
+        qCWarning(KSTARS) << query.executedQuery() << query.lastError().text();
+
     QMapIterator<DeviceFamily, QList<QString>> i(pi->drivers);
     while (i.hasNext())
     {
@@ -2999,6 +3107,11 @@ bool KSUserDB::GetAllProfiles(QList<QSharedPointer<ProfileInfo >> &profiles)
         pi->remotedrivers = record.value("remotedrivers").toString();
 
         pi->scripts = record.value("scripts").toByteArray();
+
+        // Load driver source (default to "system" if not present for backward compatibility)
+        pi->driverSource = record.value("driversource").toString();
+        if (pi->driverSource.isEmpty())
+            pi->driverSource = "system";
 
         GetProfileDrivers(pi);
 
